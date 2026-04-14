@@ -1866,6 +1866,7 @@ def _process_log_event(data, source=""):
             "ts": ts,
             "ts_epoch": ts_epoch,
             "ip": ip,
+            "host": host,
             "ua": ua[:200],
             "accept": (accept_v or "")[:120],
             "fingerprint": fp,
@@ -2506,6 +2507,7 @@ def api_history_events():
         page_size = 100
     page_size = min(max(1, page_size), HISTORY_EVENT_PAGE_MAX)
     ip_f = (request.args.get("ip") or "").strip()
+    host_f = (request.args.get("host") or "").strip().lower()
     ua_f = (request.args.get("ua") or "").strip().lower()
     path_f = (request.args.get("path") or "").strip().lower()
     status_f = (request.args.get("status") or "").strip()
@@ -2542,6 +2544,8 @@ def api_history_events():
                     continue
                 if ip_f and str(row.get("ip", "")) != ip_f:
                     continue
+                if host_f and host_f not in str(row.get("host", "")).lower():
+                    continue
                 if ua_f and ua_f not in str(row.get("ua", "")).lower():
                     continue
                 if path_f and path_f not in str(row.get("path", row.get("uri", ""))).lower():
@@ -2557,6 +2561,7 @@ def api_history_events():
                         "ts": str(row.get("ts", "")),
                         "ts_epoch": ts,
                         "ip": str(row.get("ip", "")),
+                        "host": str(row.get("host", "")),
                         "ua": str(row.get("ua", "")),
                         "path": str(row.get("path", row.get("uri", ""))),
                         "status": int(row.get("status", 0) or 0),
@@ -3076,6 +3081,7 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
               <tr style="position:sticky;top:0;background:rgba(8,12,22,0.96)">
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Time (UTC)</th>
                 <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Host</th>
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Path</th>
                 <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Status</th>
                 <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Score</th>
@@ -3530,13 +3536,14 @@ function renderHistoryEvents(rows){
   var el=document.getElementById('historyRows');
   var arr=rows||[];
   if(!arr.length){
-    el.innerHTML='<tr><td colspan="5" style="padding:10px;color:var(--muted);text-align:center">No historical events in selected range</td></tr>';
+    el.innerHTML='<tr><td colspan="6" style="padding:10px;color:var(--muted);text-align:center">No historical events in selected range</td></tr>';
     return;
   }
   el.innerHTML=arr.map(function(r){
     return '<tr>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)">'+escapeHtml(r.ts||'')+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+escapeHtml(r.ip||'')+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.host||'')+'">'+escapeHtml(r.host||'')+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.path||'')+'">'+escapeHtml(r.path||'')+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.status||0)+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.score||0)+'</td>'

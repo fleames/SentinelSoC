@@ -1,0 +1,102 @@
+# ASCII-only source: valid UTF-8 on all platforms.
+"""
+sentinel/state.py -- All shared mutable state objects.
+Imports only sentinel.config and stdlib.
+"""
+import threading
+from collections import Counter, defaultdict, deque
+
+from sentinel import config
+
+# ========================
+# COUNTERS (replaces bare scalar globals)
+# ========================
+counters = {
+    "rps": 0,
+    "total": 0,
+    "current_second": 0,
+    "peak_rps": 0,
+    "attack_counter": 0,
+    "client_err": 0,
+    "server_err": 0,
+    "bytes_served": 0,
+    "stream_started_at": None,
+}
+
+# ========================
+# DATA STRUCTURES
+# ========================
+ips = Counter()
+domains = Counter()
+referers = Counter()
+paths = Counter()
+status_codes = Counter()
+asn_counts = Counter()
+countries = Counter()
+
+ip_scores = defaultdict(int)
+ip_geo = {}
+ip_paths = defaultdict(Counter)
+ip_tags = defaultdict(set)
+asn_ips = defaultdict(set)
+
+rps_timeline = []
+attack_timeline = []
+
+geo_cache = {}
+recent_alerts = deque(maxlen=config.ALERT_QUEUE_MAX)
+geo_queue = deque()
+geo_lock = threading.Lock()
+
+# Requests seen before ipinfo returns: fold into real ASN/country on resolve.
+pending_geo_hits = defaultdict(int)
+
+lock = threading.Lock()
+audit_lock = threading.Lock()
+
+# Tail thread only; exposed in /data for debugging parse path vs dashboard total.
+stream_parse_debug = {
+    "text_lines": 0,
+    "json_roots": 0,
+    "dicts_yielded": 0,
+    "buffer_overflows": 0,
+}
+
+# Manual "mute": excluded from dashboard stats.
+banned_ips = set()
+muted_hits = Counter()
+
+# Botnet campaign tracking
+suspicious_hit_buffer = deque(maxlen=10000)
+botnet_campaigns = {}   # trigger_uri -> campaign dict
+botnet_lock = threading.Lock()
+
+fp_counts = Counter()
+fp_last_seen = {}
+ua_to_ips = defaultdict(set)
+ip_to_uas = defaultdict(set)
+ip_behavior = defaultdict(
+    lambda: {
+        "first_seen": 0.0,
+        "last_seen": 0.0,
+        "req_count": 0,
+        "unique_paths": set(),
+        "status_4xx": 0,
+        "status_5xx": 0,
+        "login_hits": 0,
+        "wp_login_hits": 0,
+        "admin_hits": 0,
+        "ua_switches": 0,
+        "last_ua": "",
+    }
+)
+ip_recent_paths = defaultdict(lambda: deque(maxlen=4))
+ip_days_seen = defaultdict(set)   # ip -> set of "YYYY-MM-DD" UTC day strings
+auth_fail_counts = Counter()      # ip -> consecutive auth failures (cleared on ban)
+ipenrich_cache   = {}             # ip -> Shodan InternetDB result cached 1h
+ipinfo_cache     = {}             # ip -> ipinfo.io result cached 1h
+abuseipdb_cache  = {}             # ip -> AbuseIPDB result cached 1h
+sources = Counter()               # source label -> total events ingested
+behavior_signal_counts = Counter()
+history_buckets = {}
+history_lock = threading.Lock()

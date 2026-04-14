@@ -1,0 +1,338 @@
+# ASCII-only source: valid UTF-8 on all platforms.
+"""
+sentinel/helpers.py -- Pure helper functions (no Flask, no side effects).
+"""
+import hashlib
+import ipaddress
+import re
+import time
+from collections import Counter
+from datetime import datetime, timezone
+
+from sentinel import config, state
+
+
+def _normalize_client_ip(s):
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if s in ("-", "", "unknown"):
+        return None
+    try:
+        return str(ipaddress.ip_address(s))
+    except ValueError:
+        return None
+
+
+def _ip_subnet(ip):
+    """Return /24 (IPv4) or /48 (IPv6) prefix string for subnet-diversity checks."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        if addr.version == 4:
+            return str(ipaddress.ip_network(f"{ip}/24", strict=False).network_address)
+        return str(ipaddress.ip_network(f"{ip}/48", strict=False).network_address)
+    except ValueError:
+        return ip
+
+
+def _campaign_id(uri):
+    """Stable 6-char hex ID for a botnet campaign keyed by trigger URI."""
+    return "BN-" + hashlib.md5(uri.encode("utf-8", errors="replace")).hexdigest()[:6].upper()
+
+
+def _normalize_uri_campaign(uri):
+    """
+    Collapse URI to a canonical attack signature that survives minor randomization.
+    Strips query string; keeps path lowercased.
+    """
+    path = (uri or "/").split("?")[0].split("#")[0].lower().rstrip("/") or "/"
+    path = re.sub(r"/[0-9a-f]{6,}/", "/*/", path)
+    return path
+
+
+def _fp_key(ip, ua, accept, accept_enc="", accept_lang="", tls_cipher="", cf_ja3=""):
+    """
+    Stable fingerprint for a client. Core signal: UA + Accept headers + TLS cipher + CF JA3.
+    """
+    raw = "|".join([
+        (ua or "-").strip()[:200],
+        (accept or "").strip()[:120],
+        (accept_enc or "").strip()[:80],
+        (accept_lang or "").strip()[:80],
+        (tls_cipher or "").strip()[:40],
+        (cf_ja3 or "").strip()[:40],
+    ])
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"{ip}|{digest}"
+
+
+def _bucket_path(uri):
+    p = (uri or "/").lower().split("?", 1)[0].split("#", 1)[0]
+    if not p.startswith("/"):
+        p = "/" + p
+    return p[:200]
+
+
+def _is_login_path(path):
+    return path in ("/login", "/wp-login.php", "/wp-login", "/admin", "/admin/login")
+
+
+def _is_static_asset(path):
+    """Return True for paths that look like browser-fetched static resources."""
+    p = (path or "").lower().split("?")[0]
+    if any(p.startswith(pfx) for pfx in ("/assets/", "/static/", "/_next/", "/dist/", "/_nuxt/", "/build/")):
+        return True
+    return p.endswith((
+        ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".webm", ".avif", ".webp",
+        ".map",
+    ))
+
+
+def _behavior_bonus(ip, ua_key, path):
+    b = state.ip_behavior[ip]
+    win_s = max(1.0, b["last_seen"] - b["first_seen"])
+    uniq_n = len(b["unique_paths"])
+    req_n = b["req_count"]
+    bonus = 0
+
+    if uniq_n >= 20 and req_n <= 60 and win_s <= 180:
+        bonus += 8
+        state.behavior_signal_counts["scanner"] += 1
+    login_pressure = b["login_hits"] + b["wp_login_hits"] + b["admin_hits"]
+    if login_pressure >= 8 and win_s <= 240:
+        bonus += 6
+        state.behavior_signal_counts["bruteforce"] += 1
+    if req_n >= 15 and b["status_4xx"] / max(1, req_n) >= 0.6:
+        bonus += 5
+        state.behavior_signal_counts["error_probe"] += 1
+
+    ua_spread = len(state.ua_to_ips.get(ua_key, ()))
+    if ua_key and ua_key != "-" and ua_spread >= 8:
+        bonus += 4
+        state.behavior_signal_counts["shared_ua_many_ips"] += 1
+    if b["ua_switches"] >= 6 and req_n <= 80 and win_s <= 300:
+        bonus += 5
+        state.behavior_signal_counts["ip_ua_rotation"] += 1
+
+    if path.startswith("/wp-") and "bot" in ua_key:
+        bonus += 2
+    return bonus
+
+
+def _history_bucket_key(ts):
+    return int(ts // config.HISTORY_BUCKET_S) * config.HISTORY_BUCKET_S
+
+
+def _history_bucket():
+    return {
+        "ts": 0,
+        "total": 0,
+        "attacks": 0,
+        "client_errors": 0,
+        "server_errors": 0,
+        "status": Counter(),
+        "top_ips": Counter(),
+        "top_paths": Counter(),
+    }
+
+
+def _update_history_bucket(ts, ip, path, status, score_value):
+    key = _history_bucket_key(ts)
+    b = state.history_buckets.get(key)
+    if b is None:
+        b = _history_bucket()
+        b["ts"] = key
+        state.history_buckets[key] = b
+    b["total"] += 1
+    if score_value > 0:
+        b["attacks"] += 1
+    if 400 <= status < 500:
+        b["client_errors"] += 1
+    elif status >= 500:
+        b["server_errors"] += 1
+    b["status"][str(status)] += 1
+    b["top_ips"][ip] += 1
+    b["top_paths"][path] += 1
+
+
+def _prune_runtime_state(now=None):
+    now = now or time.time()
+    fp_cutoff = now - 86400
+    for fp, ts in list(state.fp_last_seen.items()):
+        if ts < fp_cutoff:
+            state.fp_last_seen.pop(fp, None)
+            state.fp_counts.pop(fp, None)
+
+    behavior_cutoff = now - config.HISTORY_RETENTION_S
+    cutoff_day = datetime.fromtimestamp(behavior_cutoff, tz=timezone.utc).strftime("%Y-%m-%d")
+    for ip, b in list(state.ip_behavior.items()):
+        if b.get("last_seen", 0) < behavior_cutoff:
+            state.ip_behavior.pop(ip, None)
+            state.ip_recent_paths.pop(ip, None)
+            state.ip_to_uas.pop(ip, None)
+            state.ip_days_seen.pop(ip, None)
+        elif ip in state.ip_days_seen:
+            state.ip_days_seen[ip] = {d for d in state.ip_days_seen[ip] if d >= cutoff_day}
+
+    # Rebuild UA to IP index from surviving ip_to_uas
+    state.ua_to_ips.clear()
+    for ip, uas in state.ip_to_uas.items():
+        for u in uas:
+            state.ua_to_ips[u].add(ip)
+
+    hist_cutoff_key = _history_bucket_key(now - config.HISTORY_RETENTION_S)
+    for k in [k for k in state.history_buckets.keys() if k < hist_cutoff_key]:
+        state.history_buckets.pop(k, None)
+
+
+def _history_bucket_to_json(b):
+    return {
+        "ts": int(b.get("ts", 0)),
+        "total": int(b.get("total", 0)),
+        "attacks": int(b.get("attacks", 0)),
+        "client_errors": int(b.get("client_errors", 0)),
+        "server_errors": int(b.get("server_errors", 0)),
+        "status": {str(k): int(v) for k, v in dict(b.get("status", {})).items()},
+        "top_ips": [[str(ip), int(c)] for ip, c in Counter(b.get("top_ips", {})).most_common(12)],
+        "top_paths": [[str(p), int(c)] for p, c in Counter(b.get("top_paths", {})).most_common(12)],
+    }
+
+
+def threat_level_label(attack_rps, err_rate_pct, top_ip_share_pct):
+    """Coarse SOC rollup: not a replacement for SIEM rules."""
+    score = 0
+    if attack_rps > 50:
+        score += 3
+    elif attack_rps > 15:
+        score += 2
+    elif attack_rps > 5:
+        score += 1
+    if err_rate_pct > 25:
+        score += 2
+    elif err_rate_pct > 10:
+        score += 1
+    if top_ip_share_pct > 40:
+        score += 1
+    if score >= 5:
+        return "CRITICAL", "#dc2626"
+    if score >= 3:
+        return "HIGH", "#ea580c"
+    if score >= 1:
+        return "ELEVATED", "#ca8a04"
+    return "NORMAL", "#22c55e"
+
+
+def _header_first(headers, *names):
+    """Caddy logs headers as map[str][]string; keys may be Host, host, etc."""
+    if not headers:
+        return ""
+    for name in names:
+        v = headers.get(name)
+        if isinstance(v, list) and v:
+            s = (v[0] or "").strip()
+            if s:
+                return s
+        elif isinstance(v, str) and v.strip():
+            return v.strip()
+    for k, vals in headers.items():
+        if k.lower() in {n.lower() for n in names}:
+            if isinstance(vals, list) and vals:
+                s = (vals[0] or "").strip()
+                if s:
+                    return s
+            elif isinstance(vals, str) and vals.strip():
+                return vals.strip()
+    return ""
+
+
+def extract_request_host(req, headers):
+    """
+    Prefer Caddy's request.host (string). Fall back to Host / X-Forwarded-Host headers.
+    """
+    raw = req.get("host")
+    if isinstance(raw, str) and raw.strip():
+        h = raw.strip()
+    else:
+        h = _header_first(headers, "Host", "host")
+    if not h:
+        xf = _header_first(headers, "X-Forwarded-Host", "x-forwarded-host")
+        if xf:
+            h = xf.split(",")[0].strip()
+    if not h:
+        return "unknown"
+    h = h.strip()
+    if not h:
+        return "unknown"
+    low = h.lower().split("@")[-1].strip()
+    for suf in (":443", ":80"):
+        if low.endswith(suf):
+            low = low[: -len(suf)]
+            break
+    return low or "unknown"
+
+
+def _client_ip_from_access(data, req, headers):
+    """
+    Resolve the visitor IP for metrics. Behind Cloudflare, remote_ip is the edge;
+    the end user is in Cf-Connecting-Ip or in Caddy's client_ip (trusted_proxies).
+    """
+    cf = _header_first(headers, "Cf-Connecting-Ip", "cf-connecting-ip", "CF-Connecting-IP")
+    if cf:
+        return cf.split(",")[0].strip()
+    tc = _header_first(headers, "True-Client-Ip", "true-client-ip")
+    if tc:
+        return tc.split(",")[0].strip()
+
+    for src in (req, data):
+        if not isinstance(src, dict):
+            continue
+        v = src.get("client_ip")
+        if isinstance(v, str) and v.strip() and v.strip() not in ("-", "unknown"):
+            return v.strip()
+
+    xff = _header_first(headers, "X-Forwarded-For", "x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+
+    for src in (req, data):
+        if not isinstance(src, dict):
+            continue
+        v = src.get("remote_ip")
+        if isinstance(v, str) and v.strip() and v.strip() not in ("-", "unknown"):
+            return v.strip()
+    return "-"
+
+
+def _coerce_http_status(val):
+    if val is None or val is False:
+        return 0
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, int):
+        return val
+    s = str(val).strip().split()
+    if not s:
+        return 0
+    try:
+        return int(s[0])
+    except ValueError:
+        return 0
+
+
+def _normalize_caddy_headers(raw):
+    """Caddy usually logs headers as a JSON object; some builds use a list of [name, value] pairs."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        out = {}
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                k = str(item[0])
+                v = item[1]
+                if k not in out:
+                    out[k] = v
+        return out
+    return {}

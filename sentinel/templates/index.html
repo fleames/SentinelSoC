@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sentinel | SOC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
+<link rel="stylesheet" href="/static/sentinel.css"/>
+</head>
+<body>
+
+<div id="postureStrip"></div>
+
+<header>
+  <div class="brand">
+    <div id="liveDot" class="live-dot"></div>
+    <div>
+      <div class="brand-logo">SENTINEL</div>
+      <div class="brand-sub">Live Caddy access telemetry &mdash; <span id="updatedAgo">connecting...</span></div>
+    </div>
+  </div>
+  <div class="posture-area">
+    <span class="badge frozen" id="freezeBadge" style="display:none">FROZEN</span>
+    <span class="badge" id="authBadge" style="display:none" title="HTTP Basic Auth enabled">AUTH</span>
+    <div class="defcon-wrap">
+      <div class="defcon-blocks">
+        <div class="defcon-block" id="db0"></div>
+        <div class="defcon-block" id="db1"></div>
+        <div class="defcon-block" id="db2"></div>
+        <div class="defcon-block" id="db3"></div>
+        <div class="defcon-block" id="db4"></div>
+      </div>
+      <div class="defcon-label" id="defconLabel">POSTURE: &mdash;</div>
+    </div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="Filter lists..." autocomplete="off"/>
+  <div class="toolbar-sep"></div>
+  <button type="button" class="toolbtn" id="btnPause">Pause</button>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">Poll:</span>
+  <div class="poll-seg">
+    <button type="button" class="toolbtn poll-opt" data-ms="1000">1s</button>
+    <button type="button" class="toolbtn poll-opt on" data-ms="1500">1.5s</button>
+    <button type="button" class="toolbtn poll-opt" data-ms="3000">3s</button>
+    <button type="button" class="toolbtn poll-opt" data-ms="5000">5s</button>
+  </div>
+  <div class="toolbar-sep"></div>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">History:</span>
+  <div class="poll-seg">
+    <button type="button" class="toolbtn hist-range on" data-sec="86400">24h</button>
+    <button type="button" class="toolbtn hist-range" data-sec="604800">7d</button>
+    <button type="button" class="toolbtn hist-range" data-sec="2592000">30d</button>
+  </div>
+  <select id="histDaySelect" class="hist-day-select" title="Select a specific saved UTC day">
+    <option value="">Range mode</option>
+  </select>
+  <button type="button" class="toolbtn" id="btnHistMode">History chart</button>
+  <div class="toolbar-sep"></div>
+  <button type="button" class="toolbtn" id="btnExport">Export JSON</button>
+  <div class="toolbar-sep"></div>
+  <button type="button" class="toolbtn danger" id="btnClearFocus" style="display:none">Clear focus</button>
+  <button type="button" class="toolbtn danger" id="btnReset">Reset</button>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono);margin-left:4px"><kbd>/</kbd> search &nbsp;<kbd>Esc</kbd> close</span>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi" id="kpi-rps">
+    <div class="kpi-hd"><div class="label">Req / sec</div><div class="delta nc" id="delta-rps"></div></div>
+    <div class="val" id="rps">0</div>
+  </div>
+  <div class="kpi" id="kpi-peak">
+    <div class="kpi-hd"><div class="label">Peak RPS</div><div class="delta nc" id="delta-peak"></div></div>
+    <div class="val" id="peak">0</div>
+  </div>
+  <div class="kpi ok" id="kpi-total">
+    <div class="kpi-hd"><div class="label">Total events</div></div>
+    <div class="val" id="total">0</div>
+  </div>
+  <div class="kpi" id="kpi-uniq">
+    <div class="kpi-hd"><div class="label">Unique IPs</div><div class="delta nc" id="delta-uniq"></div></div>
+    <div class="val" id="uniq">0</div>
+  </div>
+  <div class="kpi" id="kpi-errs">
+    <div class="kpi-hd"><div class="label">4xx / 5xx</div></div>
+    <div class="val" id="errs">0 / 0</div>
+  </div>
+  <div class="kpi" id="kpi-errpct">
+    <div class="kpi-hd"><div class="label">Error rate</div><div class="delta nc" id="delta-errpct"></div></div>
+    <div class="val" id="errpct">0%</div>
+  </div>
+  <div class="kpi" id="kpi-atk">
+    <div class="kpi-hd"><div class="label">Susp / sec</div><div class="delta nc" id="delta-atk"></div></div>
+    <div class="val" id="atk">0</div>
+  </div>
+  <div class="kpi ok" id="kpi-muted">
+    <div class="kpi-hd"><div class="label">Muted (excl.)</div></div>
+    <div class="val" id="mutedTotal">0</div>
+  </div>
+  <div class="kpi ok" id="kpi-bytes">
+    <div class="kpi-hd"><div class="label">Data served</div></div>
+    <div class="val" id="bytesServed">0 B</div>
+  </div>
+</div>
+
+<div class="layout" id="layout">
+  <div>
+    <div class="card">
+      <h2>Throughput &amp; suspicious activity <span class="hint">click any IP for drill-down</span></h2>
+      <div class="charts-dual">
+        <div class="chart-wrap"><canvas id="comboChart"></canvas></div>
+        <div class="chart-wrap"><canvas id="statusDonut"></canvas></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card"><h2>Top source IPs <span class="hint" id="focusLbl"></span></h2><div class="body" id="ips"></div></div>
+      <div class="card"><h2>Hosts (virtual)</h2><div class="body" id="domains"></div></div>
+      <div class="card"><h2>Requested paths</h2><div class="body" id="paths"></div></div>
+      <div class="card"><h2>Referers</h2><div class="body" id="refs"></div></div>
+      <div class="card"><h2>ASN / org</h2><div class="body" id="asn"></div></div>
+    </div>
+    <div class="card">
+      <h2>Botnet campaigns <span class="hint">distributed coordinated attacks &mdash; 5 min window</span></h2>
+      <div class="body" style="max-height:none;padding:0">
+        <div class="bn-hdr">
+          <span>Campaign</span><span>Trigger URI</span>
+          <span style="text-align:right">IPs</span>
+          <span style="text-align:right">ASNs</span>
+          <span>Countries</span>
+          <span style="text-align:right">Confidence</span>
+        </div>
+        <div id="botnets"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Historical telemetry <span class="hint">aggregated and event drilldown</span></h2>
+      <div class="body" style="max-height:none">
+        <div id="historyMeta" style="margin-bottom:8px;color:var(--muted);font-family:var(--mono);font-size:11px">Loading history...</div>
+        <div class="hist-table-wrap">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
+            <thead>
+              <tr style="position:sticky;top:0;background:rgba(8,12,22,0.96)">
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Time (UTC)</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Host</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Path</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Status</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Score</th>
+              </tr>
+            </thead>
+            <tbody id="historyRows"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+          <button type="button" class="toolbtn" id="btnHistPrev">Prev</button>
+          <button type="button" class="toolbtn" id="btnHistNext">Next</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Origin countries &mdash; world map</h2>
+      <div id="worldMapWrap"><div id="worldMap" style="width:100%;height:100%"></div><div id="mapHoverTip" class="map-hover-tip"></div></div>
+      <div id="mapHoverReadout" class="map-hover-readout">Hover country: &mdash;</div>
+      <div class="map-legend">
+        <span class="map-legend-item"><span class="map-legend-swatch low"></span>Low</span>
+        <span class="map-legend-item"><span class="map-legend-swatch med"></span>Medium</span>
+        <span class="map-legend-item"><span class="map-legend-swatch high"></span>High</span>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar" id="sidebar">
+    <div class="sb-toggle-row">
+      <button type="button" class="toolbtn sb-toggle" id="sbToggle" title="Collapse sidebar">&#9664;</button>
+    </div>
+    <div class="card">
+      <h2>Alert feed <span class="hint">click row = focus + drill-down</span></h2>
+      <div class="body" style="max-height:370px" id="alerts"></div>
+    </div>
+    <div class="card">
+      <h2>Top scored sources (threat board)</h2>
+      <div class="body" style="max-height:none;padding:0">
+        <div class="th-grid">
+          <span>#</span><span>Source</span><span style="text-align:right">Score</span>
+          <span style="text-align:right">Hits</span><span style="text-align:center">CC</span>
+        </div>
+        <div id="threats"></div>
+      </div>
+    </div>
+    <div class="card"><h2>HTTP status mix</h2><div class="body" id="status"></div></div>
+    <div class="card">
+      <h2>Muted IPs <span class="hint" id="iptablesHintShort"></span></h2>
+      <div class="body" style="max-height:none">
+        <p id="iptablesHintP" style="margin:0 0 10px;font-size:11px;color:var(--muted);line-height:1.5"></p>
+        <div class="ban-actions">
+          <input type="text" id="banIp" class="ban-inp" placeholder="IPv4 / IPv6" autocomplete="off"/>
+          <button type="button" class="toolbtn danger" id="btnBan">Mute</button>
+        </div>
+        <div id="banList"></div>
+      </div>
+    </div>
+    <div class="card" id="sourcesCard">
+      <h2>Log sources <span class="hint">file tails + remote ingest</span></h2>
+      <div class="body" style="max-height:none;padding:0" id="sourcesList"></div>
+    </div>
+    <div class="card" id="auditCard">
+      <h2 style="display:flex;align-items:center;justify-content:space-between">
+        <span>Analyst audit log <span class="hint">mute / unban / reset actions</span></span>
+        <button type="button" class="toolbtn danger" id="btnClearAudit" style="font-size:9px;padding:3px 9px;margin:-2px 0">Clear log</button>
+      </h2>
+      <div class="body" style="max-height:220px;padding:0" id="auditList"></div>
+    </div>
+  </div>
+</div>
+<footer id="foot">Server time &mdash;</footer>
+
+<div class="modal-backdrop" id="modalBg" aria-hidden="true">
+  <div class="modal" role="dialog" aria-labelledby="modalIpText">
+    <div class="modal-banner">
+      <div class="modal-banner-top">
+        <div class="modal-ip-line">
+          <span class="modal-flag" id="modalFlag"></span>
+          <span class="modal-ip" id="modalIpText">&mdash;</span>
+          <span class="modal-cc-pill" id="modalCcPill" style="display:none"></span>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
+          <button type="button" class="toolbtn" id="modalExtLink">Lookup &#8599;</button>
+          <button type="button" class="toolbtn danger" id="modalBan">Mute</button>
+          <button type="button" class="toolbtn" id="modalClose">&#10005;</button>
+        </div>
+      </div>
+      <div class="modal-stats" id="modalStats">
+        <div class="modal-stat"><div class="modal-stat-lbl">Total hits</div><div class="modal-stat-val" id="mStatHits">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Threat score</div><div class="modal-stat-val" id="mStatScore">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Unique paths</div><div class="modal-stat-val" id="mStatPaths">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Classification</div><div class="modal-stat-val" id="mStatClass">&mdash;</div></div>
+        <div class="modal-stat" id="mStatEnrichWrap" style="display:none"><div class="modal-stat-lbl">Shodan</div><div class="modal-stat-val" id="mStatEnrich">&mdash;</div></div>
+        <div class="modal-stat" id="mStatIpinfoWrap" style="display:none"><div class="modal-stat-lbl">IPInfo</div><div class="modal-stat-val" id="mStatIpinfo">&mdash;</div></div>
+        <div class="modal-stat" id="mStatAbuseWrap" style="display:none"><div class="modal-stat-lbl">AbuseIPDB</div><div class="modal-stat-val" id="mStatAbuse">&mdash;</div></div>
+      </div>
+    </div>
+    <div class="modal-geo-strip" id="modalGeoStrip" style="display:none"></div>
+    <div class="modal-tags" id="modalTagsRow" style="display:none">
+      <span class="modal-tags-lbl">Tags</span>
+    </div>
+    <div id="modalPathsWrap">
+      <div class="modal-paths-hd"><span>Requested paths</span><span>Hits &nbsp; %</span></div>
+      <div class="path-list" id="modalPaths"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/sentinel.js" defer></script>
+</body>
+</html>

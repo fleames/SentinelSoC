@@ -60,6 +60,30 @@ python sentinel_soc.py
 
 Default listen: `0.0.0.0:5000`.
 
+## Synthetic test generator (V2)
+
+Use `sentinel_testgen.py` to append realistic bogus access events to your Caddy access log and exercise:
+- behavioral detections (scan/bruteforce/error probing),
+- fingerprint/UA clustering,
+- botnet burst correlation,
+- local historical storage + day drilldown.
+
+Examples:
+
+```bash
+# Linux: write synthetic events into your live access log
+python sentinel_testgen.py --log-path /var/log/caddy/all-access.log --events 2500 --burst-events 500
+
+# Verify Sentinel endpoints after generation
+python sentinel_testgen.py --log-path /var/log/caddy/all-access.log --events 1500 --verify-url http://127.0.0.1:5000
+```
+
+Tip: run with a small delay to spread events across time windows:
+
+```bash
+python sentinel_testgen.py --log-path /var/log/caddy/all-access.log --events 1200 --delay-ms 5
+```
+
 ## systemd
 
 Example unit: `sentinel.service` (adjust `WorkingDirectory`, `ExecStart`, and `ReadWritePaths` for your layout).

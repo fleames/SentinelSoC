@@ -3,6 +3,7 @@
 Sentinel - SOC-oriented live log dashboard (Caddy JSON access log, local tail).
 """
 import errno
+import hashlib
 import ipaddress
 import json
 import os
@@ -22,8 +23,14 @@ app = Flask(__name__)
 # ========================
 # CONFIG
 # ========================
+def _effective_log_paths():
+    """Return list of log paths to tail. LOG_PATH may be comma-separated for multiple sources."""
+    raw = os.environ.get("LOG_PATH", "/var/log/caddy/all-access.log").strip() or "/var/log/caddy/all-access.log"
+    return [p.strip() for p in raw.split(",") if p.strip()] or ["/var/log/caddy/all-access.log"]
+
+
 def _effective_log_path():
-    return os.environ.get("LOG_PATH", "/var/log/caddy/all-access.log").strip() or "/var/log/caddy/all-access.log"
+    return _effective_log_paths()[0]
 
 
 def _effective_log_from_start():
@@ -55,6 +62,14 @@ else:
 # Optional: also add/remove iptables DROP for each ban (Linux, requires root/cap_net_admin).
 IPTABLES_ENABLED = os.environ.get("SENTINEL_IPTABLES", "").lower() in ("1", "true", "yes")
 IPTABLES_CHAIN = (os.environ.get("SENTINEL_IPTABLES_CHAIN") or "INPUT").strip() or "INPUT"
+# When set, requests that lack Cloudflare headers (CF-Ray) are flagged as origin-bypass attempts.
+SENTINEL_EXPECT_CF = os.environ.get("SENTINEL_EXPECT_CF", "").lower() in ("1", "true", "yes")
+# Number of distinct UTC days an IP must be seen across before it is labelled a persistent threat.
+PERSISTENT_THREAT_DAYS = int(os.environ.get("SENTINEL_PERSISTENT_DAYS", "3") or "3")
+# Auth brute-force: auto-ban IPs that fail HTTP Basic Auth this many times. 0 = disabled.
+AUTH_FAIL_BAN_THRESHOLD = int(os.environ.get("SENTINEL_AUTH_FAIL_BAN", "10") or "10")
+# Remote ingest: Bearer key for POST /api/ingest. Empty = no key required (only safe on trusted nets).
+INGEST_KEY = os.environ.get("SENTINEL_INGEST_KEY", "").strip()
 
 # Optional HTTP Basic Auth for / /data /api/* (set both user and password). Empty = no auth.
 AUTH_USER = os.environ.get("SENTINEL_AUTH_USER", "").strip()
@@ -175,6 +190,9 @@ ip_behavior = defaultdict(
     }
 )
 ip_recent_paths = defaultdict(lambda: deque(maxlen=4))
+ip_days_seen = defaultdict(set)   # ip -> set of "YYYY-MM-DD" UTC day strings
+auth_fail_counts = Counter()      # ip -> consecutive auth failures (cleared on ban)
+sources = Counter()               # source label -> total events ingested
 behavior_signal_counts = Counter()
 history_buckets = {}
 history_lock = threading.Lock()
@@ -250,8 +268,22 @@ def _normalize_uri_campaign(uri):
     return path
 
 
-def _fp_key(ip, ua, accept):
-    return f"{ip}|{(ua or '').strip()[:200]}|{(accept or '').strip()[:120]}"
+def _fp_key(ip, ua, accept, accept_enc="", accept_lang="", tls_cipher="", cf_ja3=""):
+    """
+    Stable fingerprint for a client. Core signal: UA + Accept headers + TLS cipher + CF JA3.
+    IP is prefixed so per-IP dedup still works, but the hash captures device-level identity
+    so the same tool rotating IPs produces the same fp suffix.
+    """
+    raw = "|".join([
+        (ua or "-").strip()[:200],
+        (accept or "").strip()[:120],
+        (accept_enc or "").strip()[:80],
+        (accept_lang or "").strip()[:80],
+        (tls_cipher or "").strip()[:40],
+        (cf_ja3 or "").strip()[:40],
+    ])
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"{ip}|{digest}"
 
 
 def _bucket_path(uri):
@@ -341,11 +373,16 @@ def _prune_runtime_state(now=None):
             fp_counts.pop(fp, None)
 
     behavior_cutoff = now - HISTORY_RETENTION_S
+    cutoff_day = datetime.fromtimestamp(behavior_cutoff, tz=timezone.utc).strftime("%Y-%m-%d")
     for ip, b in list(ip_behavior.items()):
         if b.get("last_seen", 0) < behavior_cutoff:
             ip_behavior.pop(ip, None)
             ip_recent_paths.pop(ip, None)
             ip_to_uas.pop(ip, None)
+            ip_days_seen.pop(ip, None)
+        elif ip in ip_days_seen:
+            # Drop days older than the retention window
+            ip_days_seen[ip] = {d for d in ip_days_seen[ip] if d >= cutoff_day}
 
     # Rebuild UA to IP index from surviving ip_to_uas
     ua_to_ips.clear()
@@ -463,6 +500,7 @@ def _save_parsed_state():
             "suspicious_hit_buffer": list(suspicious_hit_buffer),
             "stream_parse_debug": dict(stream_parse_debug),
             "muted_hits": {str(k): int(v) for k, v in muted_hits.items()},
+            "sources": [[str(k), int(v)] for k, v in sources.items()],
         }
     with botnet_lock:
         payload["botnet_campaigns"] = {
@@ -573,6 +611,9 @@ def _load_parsed_state():
         muted_hits.clear()
         muted_hits.update({str(k): int(v) for k, v in dict(data.get("muted_hits", {})).items()})
 
+        sources.clear()
+        sources.update({str(k): int(v) for k, v in list(data.get("sources", []))})
+
     with botnet_lock:
         botnet_campaigns.clear()
         for uri, campaign in dict(data.get("botnet_campaigns", {})).items():
@@ -606,6 +647,7 @@ def _save_behavior_state():
                 for ip, b in ip_behavior.items()
             },
             "behavior_signal_counts": {k: int(v) for k, v in behavior_signal_counts.items()},
+            "ip_days_seen": {ip: sorted(days) for ip, days in ip_days_seen.items() if days},
         }
     try:
         d = os.path.dirname(BEHAVIOR_STATE_PATH) or "."
@@ -670,6 +712,9 @@ def _load_behavior_state():
                 behavior_signal_counts[str(k)] = int(v)
             except (TypeError, ValueError):
                 continue
+        ip_days_seen.clear()
+        for ip, days in dict(data.get("ip_days_seen", {})).items():
+            ip_days_seen[str(ip)] = set(str(d) for d in list(days) if isinstance(d, str) and len(d) == 10)
         _prune_runtime_state()
 
 
@@ -1210,37 +1255,89 @@ def _ua_tags(ua):
 
 
 # ========================
-# SCORING
+# DETECTION RULES ENGINE
 # ========================
-def score(ip, uri, ua, asn):
-    s = 0
-    if "cloudflare" in asn.lower():
-        return 0
-    u = uri.lower()
-    if any(
-        x in u
-        for x in (
-            ".env",
-            ".git",
-            "wp-admin",
-            "xmlrpc",
-            "phpmyadmin",
-            "adminer",
-            ".aws",
-            "credentials",
-            "shell",
-            "eval-stdin",
-            "boaform",
-            "cgi-bin",
-        )
-    ):
-        s += 10
-    ul = ua.lower()
-    if any(x in ul for x in ("bot", "curl", "python", "wget", "scanner", "nikto", "sqlmap")):
-        s += 3
-    if not ua or ua == "-":
-        s += 2
-    return s
+# Each rule: name, match(event_dict)->bool, score int.
+# "skip" rules short-circuit scoring entirely (e.g. trusted infra).
+# event_dict keys: uri, ua, path, status, asn, country, cf_ray, cf_ip.
+DETECTION_RULES = [
+    # ── Trusted infra (short-circuit) ──────────────────────────────
+    {
+        "name": "cloudflare_trusted",
+        "skip": True,
+        "match": lambda e: "cloudflare" in (e.get("asn") or "").lower(),
+        "score": 0,
+    },
+    # ── High-value paths ───────────────────────────────────────────
+    {
+        "name": "sensitive_path",
+        "match": lambda e: any(x in (e.get("uri") or "").lower() for x in (
+            ".env", ".git", "wp-admin", "xmlrpc", "phpmyadmin", "adminer",
+            ".aws", "credentials", "shell", "eval-stdin", "boaform", "cgi-bin",
+            "/actuator", "/api/v1/pods", "/.ds_store", "/server-status",
+            "/config/", "/backup", "/.git/", "/.svn/", "/debug",
+        )),
+        "score": 10,
+    },
+    # ── Suspicious user-agents ─────────────────────────────────────
+    {
+        "name": "scanner_ua",
+        "match": lambda e: any(x in (e.get("ua") or "").lower() for x in (
+            "bot", "curl", "python", "wget", "scanner", "nikto", "sqlmap",
+            "masscan", "zgrab", "nmap", "dirbuster", "gobuster", "wfuzz",
+            "nuclei", "hydra", "metasploit",
+        )),
+        "score": 3,
+    },
+    # ── Missing / empty UA ─────────────────────────────────────────
+    {
+        "name": "empty_ua",
+        "match": lambda e: not (e.get("ua") or "").strip() or (e.get("ua") or "-").strip() == "-",
+        "score": 2,
+    },
+    # ── Credential stuffing / brute-force ──────────────────────────
+    {
+        "name": "credential_stuffing",
+        "match": lambda e: (e.get("path") or "").lower() in (
+            "/login", "/wp-login.php", "/signin", "/auth/login",
+            "/account/login", "/user/login", "/admin/login",
+        ) and e.get("status") in (401, 403),
+        "score": 6,
+    },
+    # ── Origin-bypass (direct-to-origin when CF expected) ──────────
+    {
+        "name": "origin_bypass",
+        "match": lambda e: SENTINEL_EXPECT_CF and not e.get("cf_ray"),
+        "score": 5,
+    },
+]
+
+
+def _apply_rules(event):
+    """
+    Run DETECTION_RULES against an event dict.
+    Returns (total_score, list_of_matched_rule_names).
+    Short-circuit rules with skip=True return (0, []) immediately when matched.
+    """
+    for rule in DETECTION_RULES:
+        if rule.get("skip"):
+            try:
+                if rule["match"](event):
+                    return 0, []
+            except Exception:
+                pass
+    total = 0
+    matched = []
+    for rule in DETECTION_RULES:
+        if rule.get("skip"):
+            continue
+        try:
+            if rule["match"](event):
+                total += rule.get("score", 0)
+                matched.append(rule["name"])
+        except Exception:
+            pass
+    return max(0, total), matched
 
 
 def threat_level_label(attack_rps, err_rate_pct, top_ip_share_pct):
@@ -1588,14 +1685,215 @@ def iter_log_lines(path, from_start=False):
                 pass
 
 
-def stream():
-    global stream_started_at, total, current_second, attack_counter, client_err, server_err
+def _process_log_event(data, source=""):
+    """Process one Caddy access-log dict. Returns 'ok', 'noreq', or 'banned'."""
+    global total, current_second, attack_counter, client_err, server_err
 
-    stream_started_at = time.time()
-    log_path = _effective_log_path()
-    from_start = _effective_log_from_start()
+    req, status = _parse_caddy_access_line(data)
+    if not req:
+        return "noreq"
+
+    h_root = _normalize_caddy_headers(data.get("headers"))
+    h_req = _normalize_caddy_headers(req.get("headers"))
+    headers = {**h_root, **h_req}
+    ip_raw = _client_ip_from_access(data, req, headers)
+    nip = _normalize_client_ip(ip_raw) if ip_raw else None
+    mute_key = nip if nip is not None else (ip_raw.strip() if isinstance(ip_raw, str) else str(ip_raw))
+    with lock:
+        ip_banned = mute_key in banned_ips
+        if ip_banned:
+            muted_hits[mute_key] += 1
+    if ip_banned:
+        return "banned"
+
+    ip = nip if nip is not None else ip_raw
+
+    host = extract_request_host(req, headers)
+    ref = _header_first(headers, "Referer", "referer") or "-"
+    uri = req.get("uri", "/")
+    path_bucket = _bucket_path(uri)
+    ua = _header_first(headers, "User-Agent", "user-agent") or ""
+    accept_v = _header_first(headers, "Accept", "accept")
+    accept_enc_v = _header_first(headers, "Accept-Encoding", "accept-encoding")
+    accept_lang_v = _header_first(headers, "Accept-Language", "accept-language")
+    cf_ray_v = _header_first(headers, "CF-Ray", "cf-ray", "Cf-Ray")
+    cf_ja3_v = _header_first(
+        headers,
+        "CF-HTTP-Fingerprint", "cf-http-fingerprint",
+        "X-JA3-Fingerprint", "x-ja3-fingerprint",
+    )
+    tls_info = data.get("tls") if isinstance(data.get("tls"), dict) else {}
+    tls_cipher_v = str(tls_info.get("cipher_suite", "") or "")
+    ua_norm = (ua or "-").strip().lower()[:160]
+
+    geo = get_geo(ip)
+    asn = geo["asn"]
+    country = geo.get("country", "??")
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    ts_epoch = time.time()
+    fp = _fp_key(
+        ip, ua, accept_v,
+        accept_enc=accept_enc_v, accept_lang=accept_lang_v,
+        tls_cipher=tls_cipher_v, cf_ja3=cf_ja3_v,
+    )
+    s, matched_rules = _apply_rules({
+        "uri": uri,
+        "ua": ua,
+        "path": path_bucket,
+        "status": status,
+        "asn": asn,
+        "cf_ray": bool(cf_ray_v),
+    })
+
+    with lock:
+        total += 1
+        current_second += 1
+
+        ips[ip] += 1
+        domains[host] += 1
+        referers[ref] += 1
+        paths[uri] += 1
+        status_codes[status] += 1
+
+        if 400 <= status < 500:
+            client_err += 1
+        elif status >= 500:
+            server_err += 1
+
+        # Lookup may finish between get_geo() and this lock; use cache so we do not strand counts on "Resolving...".
+        resolved = geo_cache.get(ip)
+        if resolved is not None:
+            asn_u = resolved["asn"]
+            country_u = resolved.get("country", "??")
+        else:
+            asn_u = asn
+            country_u = country
+
+        if asn_u == PLACEHOLDER_ASN:
+            pending_geo_hits[ip] += 1
+        else:
+            asn_counts[asn_u] += 1
+            asn_ips[asn_u].add(ip)
+        if country_u and country_u != PLACEHOLDER_CC:
+            countries[country_u] += 1
+
+        ip_geo[ip] = resolved if resolved is not None else geo
+        ip_paths[ip][uri] += 1
+        for tg in _ua_tags(ua):
+            ip_tags[ip].add(tg)
+
+        fp_counts[fp] += 1
+        fp_last_seen[fp] = ts_epoch
+        ua_to_ips[ua_norm].add(ip)
+        ip_to_uas[ip].add(ua_norm)
+
+        b = ip_behavior[ip]
+        if not b["first_seen"]:
+            b["first_seen"] = ts_epoch
+        b["last_seen"] = ts_epoch
+        b["req_count"] += 1
+        if len(b["unique_paths"]) < 300 or path_bucket in b["unique_paths"]:
+            b["unique_paths"].add(path_bucket)
+        if 400 <= status < 500:
+            b["status_4xx"] += 1
+        elif status >= 500:
+            b["status_5xx"] += 1
+        if path_bucket in ("/login", "/signin"):
+            b["login_hits"] += 1
+        if path_bucket in ("/wp-login", "/wp-login.php"):
+            b["wp_login_hits"] += 1
+        if path_bucket.startswith("/admin"):
+            b["admin_hits"] += 1
+        if b["last_ua"] and b["last_ua"] != ua_norm:
+            b["ua_switches"] += 1
+        b["last_ua"] = ua_norm
+
+        ip_recent_paths[ip].append(path_bucket)
+        b_bonus = _behavior_bonus(ip, ua_norm, path_bucket)
+        if b_bonus:
+            s += b_bonus
+
+        # Persistence detection: flag IPs seen across multiple calendar days.
+        day_str = datetime.fromtimestamp(ts_epoch, tz=timezone.utc).strftime("%Y-%m-%d")
+        ip_days_seen[ip].add(day_str)
+        if len(ip_days_seen[ip]) >= PERSISTENT_THREAT_DAYS:
+            ip_tags[ip].add("persistent")
+            if s > 0:
+                s += 3  # slow-burn attacker bonus
+
+        ip_scores[ip] += s
+        if s > 0:
+            attack_counter += 1
+            # Feed botnet correlation buffer (outside this lock to avoid contention,
+            # but deque.append is atomic under the GIL so appending here is safe).
+            suspicious_hit_buffer.append({
+                "ts": time.time(),
+                "ip": ip,
+                "uri": _normalize_uri_campaign(uri),
+                "asn": asn_u,
+                "country": country_u,
+                "subnet": _ip_subnet(ip),
+                "ua": ua_norm,
+                "fp": fp,
+                "seq": ">".join(list(ip_recent_paths[ip])[-3:]),
+            })
+
+        if s >= SCORE_ALERT_THRESHOLD:
+            recent_alerts.appendleft(
+                {
+                    "ts": ts,
+                    "ip": ip,
+                    "uri": uri[:200],
+                    "score": s,
+                    "status": status,
+                    "country": country_u,
+                    "asn": asn_u[:120],
+                    "ua": (ua or "-")[:80],
+                    "tags": _ua_tags(ua),
+                    "rules": matched_rules,
+                }
+            )
+        _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
+        if source:
+            sources[source] += 1
+
+    if country_u == PLACEHOLDER_CC or asn_u == PLACEHOLDER_ASN:
+        enqueue_geo(ip)
+
+    _append_history_event(
+        {
+            "ts": ts,
+            "ts_epoch": ts_epoch,
+            "ip": ip,
+            "ua": ua[:200],
+            "accept": (accept_v or "")[:120],
+            "fingerprint": fp,
+            "uri": uri[:220],
+            "path": path_bucket,
+            "status": int(status),
+            "score": int(s),
+            "country": country_u,
+            "asn": asn_u[:120],
+            "tags": _ua_tags(ua),
+        }
+    )
+
+    return "ok"
+
+
+def stream(path=None, from_start=None, source_label=None):
+    global stream_started_at
+
+    log_path = path or _effective_log_path()
+    from_start_flag = from_start if from_start is not None else _effective_log_from_start()
+    if source_label is None:
+        source_label = log_path
+
+    if stream_started_at is None:
+        stream_started_at = time.time()
     print(
-        f"[sentinel] log tail path={log_path!r} LOG_FROM_START={from_start}",
+        f"[sentinel] log tail path={log_path!r} LOG_FROM_START={from_start_flag} source={source_label!r}",
         file=sys.stderr,
         flush=True,
     )
@@ -1604,13 +1902,13 @@ def stream():
     ingested = 0
     diag_issued = False
     try:
-        for data in iter_caddy_log_objects(log_path, from_start=from_start):
+        for data in iter_caddy_log_objects(log_path, from_start=from_start_flag):
             if not isinstance(data, dict):
                 continue
             objects_seen += 1
 
-            req, status = _parse_caddy_access_line(data)
-            if not req:
+            result = _process_log_event(data, source=source_label)
+            if result == "noreq":
                 no_request += 1
                 if no_request <= 2:
                     print(
@@ -1619,162 +1917,11 @@ def stream():
                         flush=True,
                     )
                 continue
-            h_root = _normalize_caddy_headers(data.get("headers"))
-            h_req = _normalize_caddy_headers(req.get("headers"))
-            headers = {**h_root, **h_req}
-            ip_raw = _client_ip_from_access(data, req, headers)
-            nip = _normalize_client_ip(ip_raw) if ip_raw else None
-            mute_key = nip if nip is not None else (ip_raw.strip() if isinstance(ip_raw, str) else str(ip_raw))
-            with lock:
-                ip_banned = mute_key in banned_ips
-                if ip_banned:
-                    muted_hits[mute_key] += 1
-            if ip_banned:
+            if result != "ok":
                 continue
 
-            ip = nip if nip is not None else ip_raw
-
-            host = extract_request_host(req, headers)
-            ref = _header_first(headers, "Referer", "referer") or "-"
-            uri = req.get("uri", "/")
-            path_bucket = _bucket_path(uri)
-            ua = _header_first(headers, "User-Agent", "user-agent") or ""
-            accept_v = _header_first(headers, "Accept", "accept")
-            ua_norm = (ua or "-").strip().lower()[:160]
-
-            geo = get_geo(ip)
-            asn = geo["asn"]
-            country = geo.get("country", "??")
-
-            s = score(ip, uri, ua, asn)
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            ts_epoch = time.time()
-            fp = _fp_key(ip, ua, accept_v)
-
-            with lock:
-                total += 1
-                current_second += 1
-
-                ips[ip] += 1
-                domains[host] += 1
-                referers[ref] += 1
-                paths[uri] += 1
-                status_codes[status] += 1
-
-                if 400 <= status < 500:
-                    client_err += 1
-                elif status >= 500:
-                    server_err += 1
-
-                # Lookup may finish between get_geo() and this lock; use cache so we do not strand counts on "Resolving...".
-                resolved = geo_cache.get(ip)
-                if resolved is not None:
-                    asn_u = resolved["asn"]
-                    country_u = resolved.get("country", "??")
-                else:
-                    asn_u = asn
-                    country_u = country
-
-                if asn_u == PLACEHOLDER_ASN:
-                    pending_geo_hits[ip] += 1
-                else:
-                    asn_counts[asn_u] += 1
-                    asn_ips[asn_u].add(ip)
-                if country_u and country_u != PLACEHOLDER_CC:
-                    countries[country_u] += 1
-
-                ip_geo[ip] = resolved if resolved is not None else geo
-                ip_paths[ip][uri] += 1
-                for tg in _ua_tags(ua):
-                    ip_tags[ip].add(tg)
-
-                fp_counts[fp] += 1
-                fp_last_seen[fp] = ts_epoch
-                ua_to_ips[ua_norm].add(ip)
-                ip_to_uas[ip].add(ua_norm)
-
-                b = ip_behavior[ip]
-                if not b["first_seen"]:
-                    b["first_seen"] = ts_epoch
-                b["last_seen"] = ts_epoch
-                b["req_count"] += 1
-                if len(b["unique_paths"]) < 300 or path_bucket in b["unique_paths"]:
-                    b["unique_paths"].add(path_bucket)
-                if 400 <= status < 500:
-                    b["status_4xx"] += 1
-                elif status >= 500:
-                    b["status_5xx"] += 1
-                if path_bucket in ("/login", "/signin"):
-                    b["login_hits"] += 1
-                if path_bucket in ("/wp-login", "/wp-login.php"):
-                    b["wp_login_hits"] += 1
-                if path_bucket.startswith("/admin"):
-                    b["admin_hits"] += 1
-                if b["last_ua"] and b["last_ua"] != ua_norm:
-                    b["ua_switches"] += 1
-                b["last_ua"] = ua_norm
-
-                ip_recent_paths[ip].append(path_bucket)
-                b_bonus = _behavior_bonus(ip, ua_norm, path_bucket)
-                if b_bonus:
-                    s += b_bonus
-
-                ip_scores[ip] += s
-                if s > 0:
-                    attack_counter += 1
-                    # Feed botnet correlation buffer (outside this lock to avoid contention,
-                    # but deque.append is atomic under the GIL so appending here is safe).
-                    suspicious_hit_buffer.append({
-                        "ts": time.time(),
-                        "ip": ip,
-                        "uri": _normalize_uri_campaign(uri),
-                        "asn": asn_u,
-                        "country": country_u,
-                        "subnet": _ip_subnet(ip),
-                        "ua": ua_norm,
-                        "fp": fp,
-                        "seq": ">".join(list(ip_recent_paths[ip])[-3:]),
-                    })
-
-                if s >= SCORE_ALERT_THRESHOLD:
-                    recent_alerts.appendleft(
-                        {
-                            "ts": ts,
-                            "ip": ip,
-                            "uri": uri[:200],
-                            "score": s,
-                            "status": status,
-                            "country": country_u,
-                            "asn": asn_u[:120],
-                            "ua": (ua or "-")[:80],
-                            "tags": _ua_tags(ua),
-                        }
-                    )
-                _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
-
-            if country_u == PLACEHOLDER_CC or asn_u == PLACEHOLDER_ASN:
-                enqueue_geo(ip)
-
-            _append_history_event(
-                {
-                    "ts": ts,
-                    "ts_epoch": ts_epoch,
-                    "ip": ip,
-                    "ua": ua[:200],
-                    "accept": (accept_v or "")[:120],
-                    "fingerprint": fp,
-                    "uri": uri[:220],
-                    "path": path_bucket,
-                    "status": int(status),
-                    "score": int(s),
-                    "country": country_u,
-                    "asn": asn_u[:120],
-                    "tags": _ua_tags(ua),
-                }
-            )
-
             ingested += 1
-            if from_start and ingested > 0 and ingested % 25000 == 0:
+            if from_start_flag and ingested > 0 and ingested % 25000 == 0:
                 print(
                     f"[sentinel] replay progress: {ingested} lines ingested from {log_path!r}",
                     file=sys.stderr,
@@ -1874,6 +2021,9 @@ def reset_dashboard_state():
         ip_to_uas.clear()
         ip_behavior.clear()
         ip_recent_paths.clear()
+        ip_days_seen.clear()
+        auth_fail_counts.clear()
+        sources.clear()
         behavior_signal_counts.clear()
         history_buckets.clear()
     with botnet_lock:
@@ -1883,15 +2033,44 @@ def reset_dashboard_state():
 # ========================
 # API
 # ========================
+def _auto_ban(ip, reason):
+    """Ban an IP programmatically and write an auto_ban audit entry."""
+    nip = _normalize_client_ip(ip)
+    if not nip:
+        return
+    with lock:
+        if nip in banned_ips:
+            return  # already banned - nothing to do
+        banned_ips.add(nip)
+        muted_hits.pop(nip, None)
+    _save_bans()
+    _iptables_drop(nip, True)
+    _audit_write("auto_ban", "sentinel", {"ip": nip, "reason": reason})
+    print(f"[sentinel] auto-ban {nip!r}: {reason}", file=sys.stderr, flush=True)
+
+
 @app.before_request
 def _sentinel_auth_gate():
     if not AUTH_ENABLED:
         return None
     if request.path == "/health":
         return None
+    # /api/ingest uses its own Bearer-token auth; skip Basic Auth gate for it.
+    if request.path == "/api/ingest":
+        return None
     auth = request.authorization
     if not auth or auth.username != AUTH_USER or not _password_matches(auth.password, AUTH_PASSWORD):
         _audit_write("auth_failed", "anonymous", {"path": request.path, "method": request.method})
+        if AUTH_FAIL_BAN_THRESHOLD > 0:
+            ra = request.remote_addr
+            nip = _normalize_client_ip(ra) if ra else None
+            if nip:
+                with audit_lock:
+                    auth_fail_counts[nip] += 1
+                    count = auth_fail_counts[nip]
+                if count >= AUTH_FAIL_BAN_THRESHOLD:
+                    auth_fail_counts.pop(nip, None)
+                    _auto_ban(nip, f"auth_fail_{count}x")
         return Response(
             "Authentication required\n",
             401,
@@ -1947,6 +2126,7 @@ def data():
 
         uptime_s = int(time.time() - stream_started_at) if stream_started_at else None
         muted_total = int(sum(muted_hits.values()))
+        sources_snapshot = dict(sources)
         banned_sorted = sorted(banned_ips)
         muted_dict = {k: int(muted_hits[k]) for k in banned_sorted}
         ip_tags_payload = {k: sorted(v) for k, v in ip_tags.items() if v}
@@ -2029,7 +2209,10 @@ def data():
             "ban_list_path": BAN_LIST_PATH,
             "parsed_state_path": PARSED_STATE_PATH,
             "log_path": _effective_log_path(),
+            "log_paths": _effective_log_paths(),
             "log_from_start": _effective_log_from_start(),
+            "ingest_enabled": True,
+            "sources": sources_snapshot,
             "stream_parse_debug": stream_parse_debug_snapshot,
             "ip_tags": ip_tags_payload,
             "fingerprint_stats": {
@@ -2102,6 +2285,46 @@ def api_unban():
             "iptables": {"enabled": IPTABLES_ENABLED, "ok": ok_ipt, "error": ipt_err},
         }
     )
+
+
+@app.route("/api/audit", methods=["GET", "DELETE"])
+def api_audit():
+    if request.method == "DELETE":
+        if not AUDIT_LOG_PATH:
+            return jsonify({"ok": True, "cleared": 0})
+        cleared = 0
+        try:
+            with audit_lock:
+                try:
+                    with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
+                        cleared = sum(1 for ln in f if ln.strip())
+                except OSError:
+                    pass
+                with open(AUDIT_LOG_PATH, "w", encoding="utf-8"):
+                    pass  # truncate
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
+        _audit_write("audit_cleared", _audit_actor(), {"entries_removed": cleared})
+        return jsonify({"ok": True, "cleared": cleared})
+
+    # GET
+    limit = min(int(request.args.get("limit", 100)), 500)
+    if not AUDIT_LOG_PATH or not os.path.exists(AUDIT_LOG_PATH):
+        return jsonify({"entries": [], "audit_path": AUDIT_LOG_PATH, "audit_enabled": bool(AUDIT_LOG_PATH)})
+    entries = []
+    try:
+        with audit_lock:
+            with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+    except OSError:
+        pass
+    return jsonify({"entries": entries[-limit:], "audit_path": AUDIT_LOG_PATH, "audit_enabled": True})
 
 
 @app.route("/api/ip")
@@ -2365,6 +2588,58 @@ def api_history_events():
     )
 
 
+@app.route("/api/ingest", methods=["POST"])
+def api_ingest():
+    """Accept JSONL Caddy access-log events pushed from remote servers.
+
+    Authentication: if SENTINEL_INGEST_KEY is set, the request must carry
+    ``Authorization: Bearer <key>``.  If the env var is empty, any caller on
+    the trusted network is accepted (set a firewall rule accordingly).
+
+    Body: one JSON object per line (JSONL / newline-delimited JSON).
+    Header: ``X-Sentinel-Source`` names the remote source (shown in the
+    Log Sources card).  Defaults to the caller's remote address.
+    """
+    if INGEST_KEY:
+        auth_header = request.headers.get("Authorization", "")
+        expected = f"Bearer {INGEST_KEY}"
+        if not secrets.compare_digest(auth_header, expected):
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    source = (
+        (request.headers.get("X-Sentinel-Source") or "").strip()
+        or request.remote_addr
+        or "remote"
+    )
+    source = source[:80]  # cap label length
+
+    body = request.get_data(as_text=False)
+    if not body:
+        return jsonify({"ok": True, "ingested": 0, "skipped": 0})
+
+    ingested = 0
+    skipped = 0
+    for raw_line in body.splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except (json.JSONDecodeError, ValueError):
+            skipped += 1
+            continue
+        if not isinstance(obj, dict):
+            skipped += 1
+            continue
+        result = _process_log_event(obj, source=source)
+        if result == "ok":
+            ingested += 1
+        else:
+            skipped += 1
+
+    return jsonify({"ok": True, "ingested": ingested, "skipped": skipped})
+
+
 # ========================
 # UI - SOC command center
 # ========================
@@ -2534,8 +2809,9 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .sc-dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0;}
 /* Tags */
 .tag{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:1px 5px;border-radius:3px;font-weight:600;flex-shrink:0;font-family:var(--sans);}
-.tag-bot    {background:rgba(12,39,68,0.8);  color:#7dd3fc;border:1px solid rgba(30,73,118,0.6);}
-.tag-crawler{background:rgba(42,31,61,0.8);  color:#d8b4fe;border:1px solid rgba(76,29,149,0.5);}
+.tag-bot       {background:rgba(12,39,68,0.8);  color:#7dd3fc;border:1px solid rgba(30,73,118,0.6);}
+.tag-crawler   {background:rgba(42,31,61,0.8);  color:#d8b4fe;border:1px solid rgba(76,29,149,0.5);}
+.tag-persistent{background:rgba(60,10,10,0.9);  color:#fca5a5;border:1px solid rgba(185,28,28,0.7);}
 /* Charts */
 .charts-dual{display:grid;grid-template-columns:1fr 190px;gap:12px;}
 @media(max-width:900px){.charts-dual{grid-template-columns:1fr;}}
@@ -2854,6 +3130,17 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
         </div>
         <div id="banList"></div>
       </div>
+    </div>
+    <div class="card" id="sourcesCard">
+      <h2>Log sources <span class="hint">file tails + remote ingest</span></h2>
+      <div class="body" style="max-height:none;padding:0" id="sourcesList"></div>
+    </div>
+    <div class="card" id="auditCard">
+      <h2 style="display:flex;align-items:center;justify-content:space-between">
+        <span>Analyst audit log <span class="hint">mute / unban / reset actions</span></span>
+        <button type="button" class="toolbtn danger" id="btnClearAudit" style="font-size:9px;padding:3px 9px;margin:-2px 0">Clear log</button>
+      </h2>
+      <div class="body" style="max-height:220px;padding:0" id="auditList"></div>
     </div>
   </div>
 </div>
@@ -3541,6 +3828,30 @@ function renderBotnetCampaigns(el,campaigns){
   }).join('');
 }
 
+function renderSources(el,sources,logPaths,ingestEnabled){
+  if(!el) return;
+  var rows=Object.entries(sources||{}).sort(function(a,b){return b[1]-a[1];});
+  // show tailed paths that have no events yet too
+  (logPaths||[]).forEach(function(p){
+    if(!sources||sources[p]===undefined) rows.push([p,0]);
+  });
+  if(!rows.length&&!ingestEnabled){el.innerHTML='<div style="padding:10px 14px;color:var(--muted);font-size:12px">No sources configured</div>';return;}
+  var h='';
+  rows.forEach(function(r){
+    var label=r[0],count=r[1];
+    var icon=label.startsWith('/')? '&#128196;' : '&#127760;';
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-bottom:1px solid var(--border)">'
+      +'<span style="font-size:13px">'+icon+'</span>'
+      +'<span style="flex:1;font-size:11px;word-break:break-all;color:var(--fg)">'+escapeHtml(label)+'</span>'
+      +'<span style="font-size:12px;color:var(--muted);white-space:nowrap">'+count.toLocaleString()+' events</span>'
+      +'</div>';
+  });
+  if(ingestEnabled){
+    h+='<div style="padding:6px 14px;font-size:10px;color:var(--ok)">HTTP ingest endpoint active (POST /api/ingest)</div>';
+  }
+  el.innerHTML=h;
+}
+
 function renderBanList(d){
   var el=document.getElementById('banList');
   var bans=d.banned_ips||[];
@@ -3689,6 +4000,17 @@ function setFocus(ip){
   loadHistoryEvents();
 }
 
+function toggleIpFocus(ip){
+  if(!ip) return;
+  if(focusIp===ip){
+    setFocus('');
+    closeModal();
+    return;
+  }
+  setFocus(ip);
+  openIpModal(ip);
+}
+
 function applyRender(d){
   renderIpList(document.getElementById('ips'),d.ips,d.ip_tags||{});
   renderList(document.getElementById('domains'),d.domains);
@@ -3699,6 +4021,7 @@ function applyRender(d){
   renderAlerts(document.getElementById('alerts'),d.alerts);
   renderThreats(document.getElementById('threats'),d.top_threats);
   renderBotnetCampaigns(document.getElementById('botnets'),d.botnet_campaigns);
+  renderSources(document.getElementById('sourcesList'),d.sources,d.log_paths,d.ingest_enabled);
   updateWorldMap(d.countries);
 }
 
@@ -3926,17 +4249,107 @@ document.getElementById('modalBan').addEventListener('click',async function(){
 
 document.body.addEventListener('click',function(e){
   var ipRow=e.target.closest('.row-ip');
-  if(ipRow&&ipRow.dataset.ip){ setFocus(ipRow.dataset.ip); openIpModal(ipRow.dataset.ip); return; }
+  if(ipRow&&ipRow.dataset.ip){ toggleIpFocus(ipRow.dataset.ip); return; }
   var th=e.target.closest('.th-row[data-ip]');
-  if(th&&th.dataset.ip){ setFocus(th.dataset.ip); openIpModal(th.dataset.ip); return; }
+  if(th&&th.dataset.ip){ toggleIpFocus(th.dataset.ip); return; }
   var ar=e.target.closest('.alert-row');
-  if(ar&&ar.dataset.ip){ setFocus(ar.dataset.ip); openIpModal(ar.dataset.ip); return; }
+  if(ar&&ar.dataset.ip){ toggleIpFocus(ar.dataset.ip); return; }
 });
 
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){ closeModal(); return; }
   if(e.key==='/'&&document.activeElement.tagName!=='INPUT'){ e.preventDefault(); document.getElementById('q').focus(); }
 });
+
+/* Audit log */
+var auditPollTimer=null;
+var auditLastCount=0;
+
+function renderAudit(entries){
+  var el=document.getElementById('auditList');
+  if(!el) return;
+  if(!entries||!entries.length){
+    el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No audit entries yet</span></div>';
+    return;
+  }
+  var ACTION_COLOR={'mute':'var(--danger)','unban':'var(--ok)','reset':'var(--warn)','auth_failed':'#f59e0b','audit_cleared':'#a78bfa','auto_ban':'#ef4444'};
+  var html='';
+  var shown=entries.slice(-50).reverse();
+  for(var i=0;i<shown.length;i++){
+    var e=shown[i];
+    var ts=e.ts?(e.ts.replace('T',' ').replace(/\\.[0-9]+([+-][0-9][0-9]:[0-9][0-9]|Z)?$/,'').replace('+00:00','')+' UTC'):'';
+    var col=ACTION_COLOR[e.action]||'var(--accent)';
+    var targetIp=(e.detail&&e.detail.ip)||(e.action==='auth_failed'?(e.remote||''):'');
+    var banBtn=targetIp
+      ? '<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px;flex-shrink:0;margin-left:4px">Ban</button>'
+      : '';
+    html+='<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:5px 10px">'
+      +'<div style="display:flex;gap:6px;width:100%;align-items:center">'
+      +'<span style="color:'+col+';font-weight:700;text-transform:uppercase;font-size:10px;flex-shrink:0">'+escapeHtml(e.action||'')+'</span>'
+      +'<span style="color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(e.user||'')+'</span>'
+      +'<span style="color:var(--muted);font-size:10px;flex-shrink:0">'+escapeHtml(e.remote||'')+'</span>'
+      +banBtn
+      +'</div>'
+      +'<div style="color:var(--muted);font-size:10px;display:flex;gap:6px;flex-wrap:wrap">'
+      +'<span>'+escapeHtml(ts)+'</span>'
+      +(targetIp?'<span style="color:var(--accent)">\u2192 '+escapeHtml(targetIp)+'</span>':'')
+      +'</div>'
+      +'</div>';
+  }
+  el.innerHTML=html;
+}
+
+async function loadAudit(force){
+  var card=document.getElementById('auditCard');
+  if(!card) return;
+  try{
+    var r=await fetch('/api/audit?limit=50',{credentials:'same-origin'});
+    if(!r.ok) return;
+    var j=await r.json();
+    if(!j.audit_enabled){ card.style.display='none'; return; }
+    card.style.display='';
+    if(force||j.entries.length!==auditLastCount){
+      auditLastCount=j.entries.length;
+      renderAudit(j.entries);
+    }
+  }catch(e){}
+}
+
+function startAuditPoll(){
+  loadAudit();
+  auditPollTimer=setInterval(loadAudit,5000);
+}
+
+document.addEventListener('click',async function(e){
+  /* Ban from audit log row */
+  var banBtn=e.target.closest('.audit-ban-btn');
+  if(banBtn&&banBtn.dataset.ip){
+    var ip=banBtn.dataset.ip;
+    if(!confirm('Mute '+ip+'?')) return;
+    try{
+      var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+      var j=await r.json().catch(function(){return{};});
+      if(!r.ok){alert(j.error||'Mute failed');return;}
+      warnIptables(j);
+      await load(true);
+      await loadAudit(true);
+    }catch(err){alert('Mute failed');}
+    return;
+  }
+});
+
+document.getElementById('btnClearAudit').addEventListener('click',async function(){
+  if(!confirm('Clear all audit log entries? This cannot be undone.')) return;
+  try{
+    var r=await fetch('/api/audit',{method:'DELETE',credentials:'same-origin'});
+    var j=await r.json().catch(function(){return{};});
+    if(!r.ok){alert(j.error||'Clear failed');return;}
+    auditLastCount=0;
+    await loadAudit(true);
+  }catch(err){alert('Clear failed');}
+});
+
+startAuditPoll();
 
 setPoll(1500);
 load();
@@ -3962,7 +4375,8 @@ if __name__ == "__main__":
     _sync_iptables_bans()
     for _ in range(GEO_WORKERS):
         threading.Thread(target=geo_worker, daemon=True).start()
-    threading.Thread(target=stream, daemon=True).start()
+    for _log_path in _effective_log_paths():
+        threading.Thread(target=stream, kwargs={"path": _log_path}, daemon=True).start()
     threading.Thread(target=reset, daemon=True).start()
     threading.Thread(target=botnet_detection_worker, daemon=True).start()
     threading.Thread(target=_state_flush_worker, daemon=True).start()

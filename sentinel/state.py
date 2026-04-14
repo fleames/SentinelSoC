@@ -104,3 +104,12 @@ history_lock = threading.Lock()
 # TLS / JA3 fingerprint correlation
 tls_fp_to_ips = defaultdict(set)   # fingerprint string -> set of IPs that used it
 ip_tls_fp = {}                     # ip -> most recent TLS fingerprint value
+
+# UA impersonation burst: per-UA sliding 60-second window
+ua_burst_window = {}               # ua_norm -> {"ts_start": float, "ips": set}
+
+# Async reputation enrichment queue
+reputation_queue = deque()
+reputation_seen = {}               # ip -> last_enriched_ts (throttle re-enrichment)
+reputation_lock = threading.Lock()
+greynoise_cache = {}               # ip -> GreyNoise result + "ts"

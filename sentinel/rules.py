@@ -2,8 +2,64 @@
 """
 sentinel/rules.py -- Detection rules engine.
 """
+import re
+from urllib.parse import unquote_plus
+
 from sentinel import config
 from sentinel.helpers import _is_static_asset
+
+# ---------------------------------------------------------------------------
+# Pre-compiled patterns for SQLi and XSS detection
+# Compiled once at import; matched against URL-decoded URI.
+# ---------------------------------------------------------------------------
+
+_SQLI_RE = re.compile(
+    r"union[\s\+%09\-/\*]+select"           # UNION SELECT (with spaces/comments)
+    r"|select[\s\+%09]+.{0,40}from[\s\+%09]"  # SELECT ... FROM
+    r"|insert[\s\+%09]+into[\s\+%09]"
+    r"|drop[\s\+%09]+table"
+    r"|(?:exec|execute)\s*\("
+    r"|(?:load_file|into\s+outfile|into\s+dumpfile)\s*\("
+    r"|(?:concat|group_concat|char|ascii|hex|unhex|substr|mid)\s*\("
+    r"|(?:sleep|benchmark|pg_sleep|waitfor[\s\+]+delay)\s*\("
+    r"|information_schema"
+    r"|0x[0-9a-fA-F]{8,}"                   # long hex blob
+    r"|(?:--|#|%23)[\s\+]"                   # SQL comment markers
+    r"|'\s*(?:or|and)\s*'?\d"               # ' OR '1, ' AND 1
+    r"|(?:or|and)\s+1\s*=\s*1"              # OR 1=1
+    r"|(?:or|and)\s+'[^']*'\s*=\s*'[^']*'" # OR 'a'='a'
+    r"|xp_cmdshell"
+    r"|sys\.(?:tables|columns|objects)",
+    re.IGNORECASE,
+)
+
+_XSS_RE = re.compile(
+    r"<\s*script"                            # <script
+    r"|<\s*/\s*script"                       # </script
+    r"|<\s*iframe"                           # <iframe
+    r"|<\s*img[^>]+onerror"                  # <img onerror=
+    r"|javascript\s*:"                        # javascript:
+    r"|vbscript\s*:"                          # vbscript:
+    r"|on(?:error|load|click|mouseover|focus|blur|keyup|keydown|submit|change)\s*=" # event handlers
+    r"|(?:eval|setTimeout|setInterval|Function)\s*\("
+    r"|document\s*\.\s*(?:cookie|write|location|createElement)"
+    r"|window\s*\.\s*(?:location|open|alert)"
+    r"|(?:innerHTML|outerHTML|insertAdjacentHTML)"
+    r"|expression\s*\("                       # CSS expression() injection
+    r"|&#x[0-9a-fA-F]+;"                     # hex HTML entities
+    r"|&#\d{2,5};",                           # decimal HTML entities (suspicious in URI)
+    re.IGNORECASE,
+)
+
+
+def _decode_uri(uri):
+    """URL-decode a URI string twice to catch double-encoded payloads."""
+    try:
+        once = unquote_plus(uri or "")
+        twice = unquote_plus(once)
+        return twice
+    except Exception:
+        return uri or ""
 
 # ========================
 # DETECTION RULES ENGINE
@@ -67,6 +123,18 @@ DETECTION_RULES = [
         "name": "origin_bypass",
         "match": lambda e: config.SENTINEL_EXPECT_CF and not e.get("cf_ray"),
         "score": 5,
+    },
+    # -- SQL injection patterns --
+    {
+        "name": "sqli",
+        "match": lambda e: bool(_SQLI_RE.search(_decode_uri(e.get("uri") or ""))),
+        "score": 12,
+    },
+    # -- XSS patterns --
+    {
+        "name": "xss",
+        "match": lambda e: bool(_XSS_RE.search(_decode_uri(e.get("uri") or ""))),
+        "score": 10,
     },
 ]
 

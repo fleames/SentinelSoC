@@ -748,6 +748,8 @@ async function openIpModal(ip){
   document.getElementById('mStatIpinfo').innerText='\u2014';
   document.getElementById('mStatAbuseWrap').style.display='none';
   document.getElementById('mStatAbuse').innerText='\u2014';
+  document.getElementById('mStatGnWrap').style.display='none';
+  document.getElementById('mStatGn').innerText='\u2014';
   document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">Loading\u2026</div>';
   document.getElementById('modalBg').classList.add('open');
   try{
@@ -877,6 +879,22 @@ async function openIpModal(ip){
             aEl.innerText=abParts.join(' | ');
             var sc=ab.abuse_score||0;
             aEl.className='modal-stat-val '+(sc>=75?'hi':sc>=25?'med':'ok');
+          }
+        }
+        // GreyNoise
+        var gn=ej.greynoise||{};
+        var gnWrap=document.getElementById('mStatGnWrap');
+        var gnEl=document.getElementById('mStatGn');
+        if(gnWrap&&gnEl&&(gn.classification||gn.noise!=null)){
+          var gnParts=[];
+          if(gn.classification&&gn.classification!=='unknown') gnParts.push(gn.classification);
+          if(gn.noise) gnParts.push('noise');
+          if(gn.riot) gnParts.push('riot');
+          if(gn.name) gnParts.push(gn.name);
+          if(gnParts.length){
+            gnWrap.style.display='';
+            gnEl.innerText=gnParts.join(' | ');
+            gnEl.className='modal-stat-val '+(gn.classification==='malicious'?'hi':gn.riot?'ok':'med');
           }
         }
       }

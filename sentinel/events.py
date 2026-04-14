@@ -26,6 +26,7 @@ from sentinel.parsing import _parse_caddy_access_line
 from sentinel.rules import _apply_rules
 from sentinel.ua import _ua_tags
 from sentinel.persistence import _append_history_event
+from sentinel.enrichment import enqueue_reputation
 
 
 def _process_log_event(data, source=""):
@@ -150,6 +151,18 @@ def _process_log_event(data, source=""):
                 state.ip_tags[ip].add("shared_tls_fp")
                 s += 4
 
+        # UA impersonation burst: same UA across many IPs within a short window
+        if ua_norm and ua_norm != "-":
+            wb = state.ua_burst_window.get(ua_norm)
+            if wb is None or (ts_epoch - wb["ts_start"]) > config.UA_BURST_WINDOW_S:
+                state.ua_burst_window[ua_norm] = {"ts_start": ts_epoch, "ips": {ip}}
+            else:
+                wb["ips"].add(ip)
+                if len(wb["ips"]) >= config.UA_BURST_THRESHOLD:
+                    state.behavior_signal_counts["ua_burst"] += 1
+                    state.ip_tags[ip].add("ua_burst")
+                    s += 8
+
         b = state.ip_behavior[ip]
         if not b["first_seen"]:
             b["first_seen"] = ts_epoch
@@ -185,6 +198,11 @@ def _process_log_event(data, source=""):
                 s += 3
 
         state.ip_scores[ip] += s
+
+        # Auto-enqueue for background reputation enrichment once score is notable
+        if state.ip_scores[ip] >= config.REPUTATION_ENRICH_THRESHOLD:
+            enqueue_reputation(ip)
+
         if s > 0:
             state.counters["attack_counter"] += 1
             state.suspicious_hit_buffer.append({

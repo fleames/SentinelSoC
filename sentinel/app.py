@@ -63,3 +63,7 @@ def start_background_threads(app):
     threading.Thread(target=reset, daemon=True).start()
     threading.Thread(target=botnet_detection_worker, daemon=True).start()
     threading.Thread(target=_state_flush_worker, daemon=True).start()
+
+    from sentinel.reputation import reputation_worker
+    for _ in range(config.REPUTATION_WORKERS):
+        threading.Thread(target=reputation_worker, daemon=True).start()

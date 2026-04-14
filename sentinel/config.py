@@ -109,6 +109,21 @@ else:
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."
 
+# GreyNoise community API key (optional; empty = skip GreyNoise enrichment).
+GREYNOISE_KEY = os.environ.get("SENTINEL_GREYNOISE_KEY", "").strip()
+
+# Minimum accumulated score before an IP is auto-enqueued for reputation enrichment.
+REPUTATION_ENRICH_THRESHOLD = int(os.environ.get("SENTINEL_REPUTATION_THRESHOLD", "10") or "10")
+# How many background reputation-worker threads to run.
+REPUTATION_WORKERS = int(os.environ.get("SENTINEL_REPUTATION_WORKERS", "2") or "2")
+# How long (seconds) before the same IP may be re-enriched. Default 1 hour.
+REPUTATION_TTL = int(os.environ.get("SENTINEL_REPUTATION_TTL", "3600") or "3600")
+
+# UA impersonation burst: flag when same UA is used by this many distinct IPs ...
+UA_BURST_THRESHOLD = int(os.environ.get("SENTINEL_UA_BURST_THRESHOLD", "20") or "20")
+# ... within this many seconds.
+UA_BURST_WINDOW_S = int(os.environ.get("SENTINEL_UA_BURST_WINDOW_S", "60") or "60")
+
 # TLS/JA3 fingerprint sharing: flag fingerprint when seen across this many distinct IPs.
 TLS_FP_SHARED_THRESHOLD = int(os.environ.get("SENTINEL_TLS_FP_THRESHOLD", "5") or "5")
 

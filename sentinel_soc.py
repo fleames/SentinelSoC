@@ -297,6 +297,20 @@ def _is_login_path(path):
     return path in ("/login", "/wp-login.php", "/wp-login", "/admin", "/admin/login")
 
 
+def _is_static_asset(path):
+    """Return True for paths that look like browser-fetched static resources.
+    These should not count toward unique-path scanner detection or rule scoring.
+    """
+    p = (path or "").lower().split("?")[0]
+    if any(p.startswith(pfx) for pfx in ("/assets/", "/static/", "/_next/", "/dist/", "/_nuxt/", "/build/")):
+        return True
+    return p.endswith((
+        ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".webm", ".avif", ".webp",
+        ".map",
+    ))
+
+
 def _behavior_bonus(ip, ua_key, path):
     b = ip_behavior[ip]
     win_s = max(1.0, b["last_seen"] - b["first_seen"])
@@ -1268,6 +1282,13 @@ DETECTION_RULES = [
         "match": lambda e: "cloudflare" in (e.get("asn") or "").lower(),
         "score": 0,
     },
+    # ── Static assets (short-circuit) ──────────────────────────────
+    {
+        "name": "static_asset",
+        "skip": True,
+        "match": lambda e: _is_static_asset((e.get("uri") or "").split("?")[0]),
+        "score": 0,
+    },
     # ── High-value paths ───────────────────────────────────────────
     {
         "name": "sensitive_path",
@@ -1793,7 +1814,7 @@ def _process_log_event(data, source=""):
             b["first_seen"] = ts_epoch
         b["last_seen"] = ts_epoch
         b["req_count"] += 1
-        if len(b["unique_paths"]) < 300 or path_bucket in b["unique_paths"]:
+        if not _is_static_asset(path_bucket) and (len(b["unique_paths"]) < 300 or path_bucket in b["unique_paths"]):
             b["unique_paths"].add(path_bucket)
         if 400 <= status < 500:
             b["status_4xx"] += 1

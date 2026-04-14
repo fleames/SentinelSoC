@@ -9,11 +9,15 @@ Sentinel is a small **SOC-style live dashboard** for a **Caddy JSON access log**
 - **Live tail** of a JSON access log with rotation-safe binary reads
 - **KPIs and charts**: RPS, status mix, top IPs, hosts, paths, referrers, ASN, country
 - **Threat-style board**: scored sources, alert buffer, IP drill-down
+- **Behavioral detection (V2)**: per-IP scan/bruteforce/error-probe signals and UA-rotation evasion detection
+- **Session fingerprinting (V2)**: `ip|ua|accept` clustering to spot shared-bot fingerprints across IPs
+- **Smarter botnet campaigns (V2)**: URI + UA + sequence + burst-timing confidence signals
+- **Historical telemetry (V2)**: local 30-day aggregates and event-level drilldown with per-day view
 - **Mute list** with optional **iptables/ip6tables** DROP sync (`SENTINEL_IPTABLES`)
 - **Geo** via [ip-api.com](http://ip-api.com) (async workers; cached)
 - **Bot / crawler tags** from User-Agent heuristics
 - **Optional HTTP Basic Auth** and append-only **audit** JSONL
-- **Persistent state** via `SENTINEL_STATE_DIR` (bans + default audit path outside the app tree)
+- **Persistent state** via `SENTINEL_STATE_DIR` (`bans.json`, `audit.jsonl`, `parsed-state.json`, `behavior-state.json`, `history-buckets.json`, `history-events/`)
 - Parses **Caddy access** lines mixed with other JSON in the same file when possible; prefers real **`http.log.access`** / **`handled request`** shaped events
 
 ## Requirements
@@ -42,6 +46,8 @@ Environment variables (see `sentinel.env.example` for a full template):
 | `SENTINEL_AUDIT_DISABLE` | Set to `1` to disable auditing |
 | `SENTINEL_IPTABLES` | Set to `1` to add/remove firewall DROP rules for muted IPs (Linux, needs privileges) |
 | `SENTINEL_IPTABLES_CHAIN` | iptables chain name (default `INPUT`) |
+| `SENTINEL_HISTORY_RETENTION_DAYS` | Retention for local historical state/events (default `30`) |
+| `SENTINEL_HISTORY_MAX_SCAN` | Maximum historical event rows scanned per `/api/history/events` request (default `20000`) |
 | `SENTINEL_AUTH_USER` / `SENTINEL_AUTH_PASSWORD` | If both set, protect `/`, `/data`, and `/api/*` with HTTP Basic Auth (`GET /health` stays open) |
 
 The tail thread **re-reads** `LOG_PATH` and `LOG_FROM_START` from the environment when it starts, so systemd `EnvironmentFile` values apply correctly.
@@ -76,6 +82,9 @@ Reference Caddyfile snippets: `caddy-recommended.caddyfile`.
 | GET | `/data` | Full JSON snapshot for the UI / export |
 | GET | `/health` | Plain `ok` (no auth when Basic Auth is enabled) |
 | GET | `/api/ip?ip=…` | Per-IP drill-down (paths, geo, tags) |
+| GET | `/api/history/series` | Aggregated history (`from`, `to`, `bucket`, optional `day`) |
+| GET | `/api/history/events` | Event drilldown (`from`, `to`, `page`, `page_size`, filters, optional `day`) |
+| GET | `/api/history/days` | Available locally saved days with day-level totals |
 | POST | `/api/ban` | JSON body `{"ip":"…"}` or `?ip=` — mute IP |
 | POST | `/api/unban` | Unmute IP |
 | POST | `/api/reset` | Clear in-memory metrics (tail keeps running) |
@@ -89,7 +98,7 @@ When auth is enabled, failed attempts are audited (if auditing is on).
 ## Troubleshooting
 
 - **`journalctl -u sentinel`** should show lines like `log tail path=…` and `log opened … size=…`. If the log cannot be opened, fix permissions or `ReadWritePaths`.
-- **`/data`** includes `log_path`, `log_from_start`, `stream_parse_debug`, `state_dir`, `ban_list_path`, `audit_path` for quick checks.
+- **`/data`** includes `log_path`, `log_from_start`, `stream_parse_debug`, `state_dir`, `ban_list_path`, `parsed_state_path`, `audit_path` for quick checks.
 - **Read-only audit path** under systemd hardening: use `SENTINEL_STATE_DIR` under a writable path, or add the audit directory to `ReadWritePaths`, or remove a bad `SENTINEL_AUDIT_LOG` override.
 
 ## License

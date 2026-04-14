@@ -82,6 +82,21 @@ BOTNET_MIN_IPS = 3          # minimum distinct IPs to open a campaign
 BOTNET_MIN_SUBNETS = 2      # minimum distinct /24 subnets (rules out one misconfigured host)
 BOTNET_MIN_ASNS = 2         # minimum distinct ASNs (rules out one ISP)
 BOTNET_EXPIRY_S = 1800      # drop campaigns silent for 30 min
+HISTORY_RETENTION_DAYS = int(os.environ.get("SENTINEL_HISTORY_RETENTION_DAYS", "30") or "30")
+HISTORY_RETENTION_S = max(1, HISTORY_RETENTION_DAYS) * 86400
+HISTORY_BUCKET_S = 60
+HISTORY_EVENT_MAX_SCAN = int(os.environ.get("SENTINEL_HISTORY_MAX_SCAN", "20000") or "20000")
+HISTORY_EVENT_PAGE_MAX = 500
+if STATE_DIR:
+    BEHAVIOR_STATE_PATH = os.path.join(STATE_DIR, "behavior-state.json")
+    PARSED_STATE_PATH = os.path.join(STATE_DIR, "parsed-state.json")
+    HISTORY_BUCKETS_PATH = os.path.join(STATE_DIR, "history-buckets.json")
+    HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "history-events")
+else:
+    BEHAVIOR_STATE_PATH = ""
+    PARSED_STATE_PATH = ""
+    HISTORY_BUCKETS_PATH = ""
+    HISTORY_EVENTS_DIR = ""
 
 # ========================
 # DATA
@@ -140,6 +155,29 @@ muted_hits = Counter()
 suspicious_hit_buffer = deque(maxlen=10000)
 botnet_campaigns = {}   # trigger_uri -> campaign dict
 botnet_lock = threading.Lock()
+fp_counts = Counter()
+fp_last_seen = {}
+ua_to_ips = defaultdict(set)
+ip_to_uas = defaultdict(set)
+ip_behavior = defaultdict(
+    lambda: {
+        "first_seen": 0.0,
+        "last_seen": 0.0,
+        "req_count": 0,
+        "unique_paths": set(),
+        "status_4xx": 0,
+        "status_5xx": 0,
+        "login_hits": 0,
+        "wp_login_hits": 0,
+        "admin_hits": 0,
+        "ua_switches": 0,
+        "last_ua": "",
+    }
+)
+ip_recent_paths = defaultdict(lambda: deque(maxlen=4))
+behavior_signal_counts = Counter()
+history_buckets = {}
+history_lock = threading.Lock()
 
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."
@@ -212,6 +250,493 @@ def _normalize_uri_campaign(uri):
     return path
 
 
+def _fp_key(ip, ua, accept):
+    return f"{ip}|{(ua or '').strip()[:200]}|{(accept or '').strip()[:120]}"
+
+
+def _bucket_path(uri):
+    p = (uri or "/").lower().split("?", 1)[0].split("#", 1)[0]
+    if not p.startswith("/"):
+        p = "/" + p
+    return p[:200]
+
+
+def _is_login_path(path):
+    return path in ("/login", "/wp-login.php", "/wp-login", "/admin", "/admin/login")
+
+
+def _behavior_bonus(ip, ua_key, path):
+    b = ip_behavior[ip]
+    win_s = max(1.0, b["last_seen"] - b["first_seen"])
+    uniq_n = len(b["unique_paths"])
+    req_n = b["req_count"]
+    bonus = 0
+
+    if uniq_n >= 20 and req_n <= 60 and win_s <= 180:
+        bonus += 8
+        behavior_signal_counts["scanner"] += 1
+    login_pressure = b["login_hits"] + b["wp_login_hits"] + b["admin_hits"]
+    if login_pressure >= 8 and win_s <= 240:
+        bonus += 6
+        behavior_signal_counts["bruteforce"] += 1
+    if req_n >= 15 and b["status_4xx"] / max(1, req_n) >= 0.6:
+        bonus += 5
+        behavior_signal_counts["error_probe"] += 1
+
+    ua_spread = len(ua_to_ips.get(ua_key, ()))
+    if ua_key and ua_key != "-" and ua_spread >= 8:
+        bonus += 4
+        behavior_signal_counts["shared_ua_many_ips"] += 1
+    if b["ua_switches"] >= 6 and req_n <= 80 and win_s <= 300:
+        bonus += 5
+        behavior_signal_counts["ip_ua_rotation"] += 1
+
+    if path.startswith("/wp-") and "bot" in ua_key:
+        bonus += 2
+    return bonus
+
+
+def _history_bucket_key(ts):
+    return int(ts // HISTORY_BUCKET_S) * HISTORY_BUCKET_S
+
+
+def _history_bucket():
+    return {
+        "ts": 0,
+        "total": 0,
+        "attacks": 0,
+        "client_errors": 0,
+        "server_errors": 0,
+        "status": Counter(),
+        "top_ips": Counter(),
+        "top_paths": Counter(),
+    }
+
+
+def _update_history_bucket(ts, ip, path, status, score_value):
+    key = _history_bucket_key(ts)
+    b = history_buckets.get(key)
+    if b is None:
+        b = _history_bucket()
+        b["ts"] = key
+        history_buckets[key] = b
+    b["total"] += 1
+    if score_value > 0:
+        b["attacks"] += 1
+    if 400 <= status < 500:
+        b["client_errors"] += 1
+    elif status >= 500:
+        b["server_errors"] += 1
+    b["status"][str(status)] += 1
+    b["top_ips"][ip] += 1
+    b["top_paths"][path] += 1
+
+
+def _prune_runtime_state(now=None):
+    now = now or time.time()
+    fp_cutoff = now - 86400
+    for fp, ts in list(fp_last_seen.items()):
+        if ts < fp_cutoff:
+            fp_last_seen.pop(fp, None)
+            fp_counts.pop(fp, None)
+
+    behavior_cutoff = now - HISTORY_RETENTION_S
+    for ip, b in list(ip_behavior.items()):
+        if b.get("last_seen", 0) < behavior_cutoff:
+            ip_behavior.pop(ip, None)
+            ip_recent_paths.pop(ip, None)
+            ip_to_uas.pop(ip, None)
+
+    # Rebuild UA to IP index from surviving ip_to_uas
+    ua_to_ips.clear()
+    for ip, uas in ip_to_uas.items():
+        for u in uas:
+            ua_to_ips[u].add(ip)
+
+    hist_cutoff_key = _history_bucket_key(now - HISTORY_RETENTION_S)
+    for k in [k for k in history_buckets.keys() if k < hist_cutoff_key]:
+        history_buckets.pop(k, None)
+
+
+def _history_events_path(ts):
+    if not HISTORY_EVENTS_DIR:
+        return ""
+    d = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    return os.path.join(HISTORY_EVENTS_DIR, f"{d}.jsonl")
+
+
+def _append_history_event(event_row):
+    path = _history_events_path(event_row.get("ts_epoch", time.time()))
+    if not path:
+        return
+    try:
+        os.makedirs(HISTORY_EVENTS_DIR, exist_ok=True)
+        payload = json.dumps(event_row, separators=(",", ":"), ensure_ascii=True) + "\n"
+        with history_lock:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(payload)
+    except OSError:
+        pass
+
+
+def _prune_history_event_files(now=None):
+    if not HISTORY_EVENTS_DIR or not os.path.isdir(HISTORY_EVENTS_DIR):
+        return
+    now = now or time.time()
+    cutoff = now - HISTORY_RETENTION_S
+    for name in os.listdir(HISTORY_EVENTS_DIR):
+        if not name.endswith(".jsonl"):
+            continue
+        p = os.path.join(HISTORY_EVENTS_DIR, name)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_mtime < cutoff:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def _history_bucket_to_json(b):
+    return {
+        "ts": int(b.get("ts", 0)),
+        "total": int(b.get("total", 0)),
+        "attacks": int(b.get("attacks", 0)),
+        "client_errors": int(b.get("client_errors", 0)),
+        "server_errors": int(b.get("server_errors", 0)),
+        "status": {str(k): int(v) for k, v in dict(b.get("status", {})).items()},
+        "top_ips": [[str(ip), int(c)] for ip, c in Counter(b.get("top_ips", {})).most_common(12)],
+        "top_paths": [[str(p), int(c)] for p, c in Counter(b.get("top_paths", {})).most_common(12)],
+    }
+
+
+def _save_parsed_state():
+    if not PARSED_STATE_PATH:
+        return
+    with lock:
+        payload = {
+            "saved_at": int(time.time()),
+            "total": int(total),
+            "rps": int(rps),
+            "peak_rps": int(peak_rps),
+            "current_second": int(current_second),
+            "attack_counter": int(attack_counter),
+            "client_err": int(client_err),
+            "server_err": int(server_err),
+            "stream_started_at": float(stream_started_at or 0.0),
+            "ips": [[str(k), int(v)] for k, v in ips.items()],
+            "domains": [[str(k), int(v)] for k, v in domains.items()],
+            "referers": [[str(k), int(v)] for k, v in referers.items()],
+            "paths": [[str(k), int(v)] for k, v in paths.items()],
+            "status_codes": [[str(k), int(v)] for k, v in status_codes.items()],
+            "asn_counts": [[str(k), int(v)] for k, v in asn_counts.items()],
+            "countries": [[str(k), int(v)] for k, v in countries.items()],
+            "ip_scores": [[str(k), int(v)] for k, v in ip_scores.items()],
+            "ip_geo": {
+                str(k): {
+                    "country": str((v or {}).get("country", "??")),
+                    "asn": str((v or {}).get("asn", "Unknown")),
+                }
+                for k, v in ip_geo.items()
+                if isinstance(v, dict)
+            },
+            "ip_paths": {
+                str(ip): [[str(p), int(c)] for p, c in cnt.items()]
+                for ip, cnt in ip_paths.items()
+            },
+            "ip_tags": {str(ip): sorted(str(t) for t in tags) for ip, tags in ip_tags.items()},
+            "asn_ips": {str(asn): sorted(str(ip) for ip in ipset) for asn, ipset in asn_ips.items()},
+            "rps_timeline": [int(x) for x in rps_timeline[-600:]],
+            "attack_timeline": [int(x) for x in attack_timeline[-600:]],
+            "recent_alerts": list(recent_alerts),
+            "pending_geo_hits": {str(k): int(v) for k, v in pending_geo_hits.items()},
+            "geo_cache": {
+                str(k): {
+                    "country": str((v or {}).get("country", "??")),
+                    "asn": str((v or {}).get("asn", "Unknown")),
+                }
+                for k, v in geo_cache.items()
+                if isinstance(v, dict)
+            },
+            "suspicious_hit_buffer": list(suspicious_hit_buffer),
+            "stream_parse_debug": dict(stream_parse_debug),
+            "muted_hits": {str(k): int(v) for k, v in muted_hits.items()},
+        }
+    with botnet_lock:
+        payload["botnet_campaigns"] = {
+            str(uri): _campaign_for_api(c) for uri, c in botnet_campaigns.items()
+        }
+    try:
+        d = os.path.dirname(PARSED_STATE_PATH) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = PARSED_STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, PARSED_STATE_PATH)
+    except OSError:
+        pass
+
+
+def _load_parsed_state():
+    global total, rps, peak_rps, current_second, attack_counter, client_err, server_err, stream_started_at
+    if not PARSED_STATE_PATH:
+        return
+    try:
+        with open(PARSED_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+    with lock:
+        total = int(data.get("total", 0) or 0)
+        rps = int(data.get("rps", 0) or 0)
+        peak_rps = int(data.get("peak_rps", 0) or 0)
+        current_second = int(data.get("current_second", 0) or 0)
+        attack_counter = int(data.get("attack_counter", 0) or 0)
+        client_err = int(data.get("client_err", 0) or 0)
+        server_err = int(data.get("server_err", 0) or 0)
+        ss = float(data.get("stream_started_at", 0) or 0.0)
+        stream_started_at = ss if ss > 0 else time.time()
+
+        ips.clear()
+        ips.update({str(k): int(v) for k, v in list(data.get("ips", []))})
+        domains.clear()
+        domains.update({str(k): int(v) for k, v in list(data.get("domains", []))})
+        referers.clear()
+        referers.update({str(k): int(v) for k, v in list(data.get("referers", []))})
+        paths.clear()
+        paths.update({str(k): int(v) for k, v in list(data.get("paths", []))})
+        status_codes.clear()
+        status_codes.update({str(k): int(v) for k, v in list(data.get("status_codes", []))})
+        asn_counts.clear()
+        asn_counts.update({str(k): int(v) for k, v in list(data.get("asn_counts", []))})
+        countries.clear()
+        countries.update({str(k): int(v) for k, v in list(data.get("countries", []))})
+        ip_scores.clear()
+        ip_scores.update({str(k): int(v) for k, v in list(data.get("ip_scores", []))})
+
+        ip_geo.clear()
+        for k, v in dict(data.get("ip_geo", {})).items():
+            if isinstance(v, dict):
+                ip_geo[str(k)] = {
+                    "country": str(v.get("country", "??")),
+                    "asn": str(v.get("asn", "Unknown")),
+                }
+
+        ip_paths.clear()
+        for ip, rows in dict(data.get("ip_paths", {})).items():
+            c = Counter()
+            for p, cnt in list(rows):
+                c[str(p)] += int(cnt)
+            ip_paths[str(ip)] = c
+
+        ip_tags.clear()
+        for ip, tags in dict(data.get("ip_tags", {})).items():
+            ip_tags[str(ip)] = set(str(t) for t in list(tags))
+
+        asn_ips.clear()
+        for asn, ip_list in dict(data.get("asn_ips", {})).items():
+            asn_ips[str(asn)] = set(str(ip) for ip in list(ip_list))
+
+        rps_timeline.clear()
+        rps_timeline.extend(int(x) for x in list(data.get("rps_timeline", []))[-600:])
+        attack_timeline.clear()
+        attack_timeline.extend(int(x) for x in list(data.get("attack_timeline", []))[-600:])
+
+        recent_alerts.clear()
+        for row in list(data.get("recent_alerts", []))[:ALERT_QUEUE_MAX]:
+            if isinstance(row, dict):
+                recent_alerts.append(row)
+
+        pending_geo_hits.clear()
+        pending_geo_hits.update({str(k): int(v) for k, v in dict(data.get("pending_geo_hits", {})).items()})
+
+        geo_cache.clear()
+        for k, v in dict(data.get("geo_cache", {})).items():
+            if isinstance(v, dict):
+                geo_cache[str(k)] = {
+                    "country": str(v.get("country", "??")),
+                    "asn": str(v.get("asn", "Unknown")),
+                }
+
+        suspicious_hit_buffer.clear()
+        for row in list(data.get("suspicious_hit_buffer", []))[-10000:]:
+            if isinstance(row, dict):
+                suspicious_hit_buffer.append(row)
+
+        for k in ("text_lines", "json_roots", "dicts_yielded", "buffer_overflows"):
+            stream_parse_debug[k] = int(dict(data.get("stream_parse_debug", {})).get(k, 0) or 0)
+
+        muted_hits.clear()
+        muted_hits.update({str(k): int(v) for k, v in dict(data.get("muted_hits", {})).items()})
+
+    with botnet_lock:
+        botnet_campaigns.clear()
+        for uri, campaign in dict(data.get("botnet_campaigns", {})).items():
+            botnet_campaigns[str(uri)] = _campaign_for_api(campaign)
+
+
+def _save_behavior_state():
+    if not BEHAVIOR_STATE_PATH:
+        return
+    with lock:
+        _prune_runtime_state()
+        payload = {
+            "saved_at": int(time.time()),
+            "fp_counts": [[k, int(v)] for k, v in fp_counts.most_common(25000)],
+            "fp_last_seen": {k: float(v) for k, v in fp_last_seen.items()},
+            "ip_to_uas": {ip: sorted(list(uas))[:30] for ip, uas in ip_to_uas.items()},
+            "ip_behavior": {
+                ip: {
+                    "first_seen": float(b.get("first_seen", 0.0)),
+                    "last_seen": float(b.get("last_seen", 0.0)),
+                    "req_count": int(b.get("req_count", 0)),
+                    "unique_paths": sorted(list(b.get("unique_paths", set())))[:150],
+                    "status_4xx": int(b.get("status_4xx", 0)),
+                    "status_5xx": int(b.get("status_5xx", 0)),
+                    "login_hits": int(b.get("login_hits", 0)),
+                    "wp_login_hits": int(b.get("wp_login_hits", 0)),
+                    "admin_hits": int(b.get("admin_hits", 0)),
+                    "ua_switches": int(b.get("ua_switches", 0)),
+                    "last_ua": str(b.get("last_ua", ""))[:160],
+                }
+                for ip, b in ip_behavior.items()
+            },
+            "behavior_signal_counts": {k: int(v) for k, v in behavior_signal_counts.items()},
+        }
+    try:
+        d = os.path.dirname(BEHAVIOR_STATE_PATH) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = BEHAVIOR_STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, BEHAVIOR_STATE_PATH)
+    except OSError:
+        pass
+
+
+def _load_behavior_state():
+    if not BEHAVIOR_STATE_PATH:
+        return
+    try:
+        with open(BEHAVIOR_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+    with lock:
+        fp_counts.clear()
+        for k, v in data.get("fp_counts", []):
+            try:
+                fp_counts[str(k)] += int(v)
+            except (TypeError, ValueError):
+                continue
+        fp_last_seen.clear()
+        for k, v in dict(data.get("fp_last_seen", {})).items():
+            try:
+                fp_last_seen[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        ip_to_uas.clear()
+        for ip, uas in dict(data.get("ip_to_uas", {})).items():
+            ip_to_uas[str(ip)].update(str(x) for x in list(uas)[:30])
+        ua_to_ips.clear()
+        for ip, uas in ip_to_uas.items():
+            for u in uas:
+                ua_to_ips[u].add(ip)
+        ip_behavior.clear()
+        for ip, raw in dict(data.get("ip_behavior", {})).items():
+            if not isinstance(raw, dict):
+                continue
+            b = ip_behavior[str(ip)]
+            b["first_seen"] = float(raw.get("first_seen", 0.0) or 0.0)
+            b["last_seen"] = float(raw.get("last_seen", 0.0) or 0.0)
+            b["req_count"] = int(raw.get("req_count", 0) or 0)
+            b["unique_paths"] = set(str(x) for x in list(raw.get("unique_paths", []))[:150])
+            b["status_4xx"] = int(raw.get("status_4xx", 0) or 0)
+            b["status_5xx"] = int(raw.get("status_5xx", 0) or 0)
+            b["login_hits"] = int(raw.get("login_hits", 0) or 0)
+            b["wp_login_hits"] = int(raw.get("wp_login_hits", 0) or 0)
+            b["admin_hits"] = int(raw.get("admin_hits", 0) or 0)
+            b["ua_switches"] = int(raw.get("ua_switches", 0) or 0)
+            b["last_ua"] = str(raw.get("last_ua", ""))[:160]
+        behavior_signal_counts.clear()
+        for k, v in dict(data.get("behavior_signal_counts", {})).items():
+            try:
+                behavior_signal_counts[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        _prune_runtime_state()
+
+
+def _save_history_buckets():
+    if not HISTORY_BUCKETS_PATH:
+        return
+    with lock:
+        _prune_runtime_state()
+        payload = {
+            "saved_at": int(time.time()),
+            "buckets": [_history_bucket_to_json(v) for _, v in sorted(history_buckets.items())],
+        }
+    try:
+        d = os.path.dirname(HISTORY_BUCKETS_PATH) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = HISTORY_BUCKETS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, HISTORY_BUCKETS_PATH)
+    except OSError:
+        pass
+
+
+def _load_history_buckets():
+    if not HISTORY_BUCKETS_PATH:
+        return
+    try:
+        with open(HISTORY_BUCKETS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+    with lock:
+        history_buckets.clear()
+        for raw in data.get("buckets", []):
+            if not isinstance(raw, dict):
+                continue
+            try:
+                ts = int(raw.get("ts", 0))
+            except (TypeError, ValueError):
+                continue
+            b = _history_bucket()
+            b["ts"] = ts
+            b["total"] = int(raw.get("total", 0) or 0)
+            b["attacks"] = int(raw.get("attacks", 0) or 0)
+            b["client_errors"] = int(raw.get("client_errors", 0) or 0)
+            b["server_errors"] = int(raw.get("server_errors", 0) or 0)
+            b["status"] = Counter({str(k): int(v) for k, v in dict(raw.get("status", {})).items()})
+            b["top_ips"] = Counter({str(k): int(v) for k, v in list(raw.get("top_ips", []))})
+            b["top_paths"] = Counter({str(k): int(v) for k, v in list(raw.get("top_paths", []))})
+            history_buckets[ts] = b
+        _prune_runtime_state()
+
+
+def _state_flush_worker():
+    while True:
+        time.sleep(20)
+        try:
+            _save_parsed_state()
+            _save_behavior_state()
+            _save_history_buckets()
+            _prune_history_event_files()
+        except Exception:
+            pass
+
+
 def detect_botnets():
     """
     Scan suspicious_hit_buffer and update botnet_campaigns.
@@ -263,11 +788,42 @@ def detect_botnets():
             # Confidence: weighted sum, capped at 100.
             # ASN diversity carries most weight (hardest for attacker to fake).
             # IP count uses diminishing returns via min() cap.
-            conf = min(100, int(
+            conf = int(
                 min(len(distinct_ips), 20) * 2     # up to 40 pts
                 + min(len(distinct_asns), 8) * 6   # up to 48 pts
                 + min(len(distinct_countries), 4) * 3  # up to 12 pts
-            ))
+            )
+
+            ua_to_ips_local = defaultdict(set)
+            seq_to_ips_local = defaultdict(set)
+            sec_counts = Counter()
+            for h in hits:
+                ua_norm = (h.get("ua") or "-").strip().lower()[:160]
+                ua_to_ips_local[ua_norm].add(h["ip"])
+                seq = (h.get("seq") or "").strip()[:300]
+                if seq:
+                    seq_to_ips_local[seq].add(h["ip"])
+                sec_counts[int(h["ts"])] += 1
+
+            max_shared_ua = max((len(v) for v in ua_to_ips_local.values()), default=0)
+            max_shared_seq = max((len(v) for v in seq_to_ips_local.values()), default=0)
+
+            burst_peak = 0
+            if sec_counts:
+                sec_keys = sorted(sec_counts.keys())
+                for base in sec_keys:
+                    win_sum = 0
+                    for t in range(base, base + 10):
+                        win_sum += sec_counts.get(t, 0)
+                    burst_peak = max(burst_peak, win_sum)
+
+            if max_shared_ua >= BOTNET_MIN_IPS:
+                conf += 20
+            if max_shared_seq >= BOTNET_MIN_IPS:
+                conf += 12
+            if burst_peak >= max(6, len(hits) // 3):
+                conf += 10
+            conf = min(100, int(conf))
 
             if uri in botnet_campaigns:
                 c = botnet_campaigns[uri]
@@ -281,6 +837,9 @@ def detect_botnets():
                 c["country_count"] = len(distinct_countries)
                 c["countries"] = sorted(distinct_countries)
                 c["confidence"] = conf
+                c["shared_ua_ips"] = int(max_shared_ua)
+                c["shared_seq_ips"] = int(max_shared_seq)
+                c["burst_peak_10s"] = int(burst_peak)
             else:
                 botnet_campaigns[uri] = {
                     "id": _campaign_id(uri),
@@ -296,6 +855,9 @@ def detect_botnets():
                     "country_count": len(distinct_countries),
                     "countries": sorted(distinct_countries),
                     "confidence": conf,
+                    "shared_ua_ips": int(max_shared_ua),
+                    "shared_seq_ips": int(max_shared_seq),
+                    "burst_peak_10s": int(burst_peak),
                 }
 
         # Expire stale campaigns
@@ -330,6 +892,9 @@ def _campaign_for_api(raw):
         "country_count": int(c.get("country_count", 0) or 0),
         "countries": [str(x) for x in list(c.get("countries", []))[:20]],
         "confidence": int(c.get("confidence", 0) or 0),
+        "shared_ua_ips": int(c.get("shared_ua_ips", 0) or 0),
+        "shared_seq_ips": int(c.get("shared_seq_ips", 0) or 0),
+        "burst_peak_10s": int(c.get("burst_peak_10s", 0) or 0),
     }
 
 
@@ -452,6 +1017,8 @@ def _ensure_state_dir():
         return
     try:
         os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+        if HISTORY_EVENTS_DIR:
+            os.makedirs(HISTORY_EVENTS_DIR, mode=0o700, exist_ok=True)
         print(f"[sentinel] state dir ready: {STATE_DIR}", file=sys.stderr, flush=True)
     except OSError as err:
         print(f"[sentinel] state dir mkdir failed ({STATE_DIR}): {err}", file=sys.stderr, flush=True)
@@ -1070,7 +1637,10 @@ def stream():
             host = extract_request_host(req, headers)
             ref = _header_first(headers, "Referer", "referer") or "-"
             uri = req.get("uri", "/")
+            path_bucket = _bucket_path(uri)
             ua = _header_first(headers, "User-Agent", "user-agent") or ""
+            accept_v = _header_first(headers, "Accept", "accept")
+            ua_norm = (ua or "-").strip().lower()[:160]
 
             geo = get_geo(ip)
             asn = geo["asn"]
@@ -1078,6 +1648,8 @@ def stream():
 
             s = score(ip, uri, ua, asn)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            ts_epoch = time.time()
+            fp = _fp_key(ip, ua, accept_v)
 
             with lock:
                 total += 1
@@ -1116,6 +1688,37 @@ def stream():
                 for tg in _ua_tags(ua):
                     ip_tags[ip].add(tg)
 
+                fp_counts[fp] += 1
+                fp_last_seen[fp] = ts_epoch
+                ua_to_ips[ua_norm].add(ip)
+                ip_to_uas[ip].add(ua_norm)
+
+                b = ip_behavior[ip]
+                if not b["first_seen"]:
+                    b["first_seen"] = ts_epoch
+                b["last_seen"] = ts_epoch
+                b["req_count"] += 1
+                if len(b["unique_paths"]) < 300 or path_bucket in b["unique_paths"]:
+                    b["unique_paths"].add(path_bucket)
+                if 400 <= status < 500:
+                    b["status_4xx"] += 1
+                elif status >= 500:
+                    b["status_5xx"] += 1
+                if path_bucket in ("/login", "/signin"):
+                    b["login_hits"] += 1
+                if path_bucket in ("/wp-login", "/wp-login.php"):
+                    b["wp_login_hits"] += 1
+                if path_bucket.startswith("/admin"):
+                    b["admin_hits"] += 1
+                if b["last_ua"] and b["last_ua"] != ua_norm:
+                    b["ua_switches"] += 1
+                b["last_ua"] = ua_norm
+
+                ip_recent_paths[ip].append(path_bucket)
+                b_bonus = _behavior_bonus(ip, ua_norm, path_bucket)
+                if b_bonus:
+                    s += b_bonus
+
                 ip_scores[ip] += s
                 if s > 0:
                     attack_counter += 1
@@ -1128,6 +1731,9 @@ def stream():
                         "asn": asn_u,
                         "country": country_u,
                         "subnet": _ip_subnet(ip),
+                        "ua": ua_norm,
+                        "fp": fp,
+                        "seq": ">".join(list(ip_recent_paths[ip])[-3:]),
                     })
 
                 if s >= SCORE_ALERT_THRESHOLD:
@@ -1144,9 +1750,28 @@ def stream():
                             "tags": _ua_tags(ua),
                         }
                     )
+                _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
 
             if country_u == PLACEHOLDER_CC or asn_u == PLACEHOLDER_ASN:
                 enqueue_geo(ip)
+
+            _append_history_event(
+                {
+                    "ts": ts,
+                    "ts_epoch": ts_epoch,
+                    "ip": ip,
+                    "ua": ua[:200],
+                    "accept": (accept_v or "")[:120],
+                    "fingerprint": fp,
+                    "uri": uri[:220],
+                    "path": path_bucket,
+                    "status": int(status),
+                    "score": int(s),
+                    "country": country_u,
+                    "asn": asn_u[:120],
+                    "tags": _ua_tags(ua),
+                }
+            )
 
             ingested += 1
             if from_start and ingested > 0 and ingested % 25000 == 0:
@@ -1182,6 +1807,7 @@ def stream():
 def reset():
     global rps, current_second, peak_rps, attack_counter
 
+    ticks = 0
     while True:
         time.sleep(1)
         with lock:
@@ -1198,6 +1824,11 @@ def reset():
 
             current_second = 0
             attack_counter = 0
+            ticks += 1
+            if ticks % 30 == 0:
+                _prune_runtime_state()
+        if ticks % 60 == 0:
+            _prune_history_event_files()
 
 
 def reset_dashboard_state():
@@ -1237,6 +1868,14 @@ def reset_dashboard_state():
         stream_parse_debug["dicts_yielded"] = 0
         stream_parse_debug["buffer_overflows"] = 0
         suspicious_hit_buffer.clear()
+        fp_counts.clear()
+        fp_last_seen.clear()
+        ua_to_ips.clear()
+        ip_to_uas.clear()
+        ip_behavior.clear()
+        ip_recent_paths.clear()
+        behavior_signal_counts.clear()
+        history_buckets.clear()
     with botnet_lock:
         botnet_campaigns.clear()
 
@@ -1315,7 +1954,8 @@ def data():
         domains_top = domains.most_common(10)
         referers_top = referers.most_common(10)
         paths_top = paths.most_common(10)
-        status_snapshot = dict(status_codes)
+        # Keep JSON keys as strings; mixed int/str keys can break Flask's sorted dumps.
+        status_snapshot = {str(k): int(v) for k, v in status_codes.items()}
         asn_top = asn_counts.most_common(10)
         countries_top = countries.most_common(12)
         scores_snapshot = dict(ip_scores)
@@ -1331,6 +1971,13 @@ def data():
         rps_timeline_snapshot = list(rps_timeline)
         attack_timeline_snapshot = list(attack_timeline)
         stream_parse_debug_snapshot = dict(stream_parse_debug)
+        fp_total = int(sum(fp_counts.values()))
+        fp_unique = int(len(fp_counts))
+        ua_cluster_max = int(max((len(v) for v in ua_to_ips.values()), default=0))
+        ip_behavior_count = int(len(ip_behavior))
+        behavior_signal_snapshot = {k: int(v) for k, v in behavior_signal_counts.items()}
+        history_bucket_count = int(len(history_buckets))
+        history_latest = int(max(history_buckets.keys()) if history_buckets else 0)
 
     # Snapshot botnet campaigns under their own lock (after releasing main lock)
     with botnet_lock:
@@ -1380,10 +2027,25 @@ def data():
             "audit_path": AUDIT_LOG_PATH,
             "state_dir": STATE_DIR,
             "ban_list_path": BAN_LIST_PATH,
+            "parsed_state_path": PARSED_STATE_PATH,
             "log_path": _effective_log_path(),
             "log_from_start": _effective_log_from_start(),
             "stream_parse_debug": stream_parse_debug_snapshot,
             "ip_tags": ip_tags_payload,
+            "fingerprint_stats": {
+                "unique": fp_unique,
+                "total_hits": fp_total,
+                "largest_ua_cluster_ips": ua_cluster_max,
+            },
+            "behavior_stats": {
+                "tracked_ips": ip_behavior_count,
+                "signals": behavior_signal_snapshot,
+            },
+            "history_stats": {
+                "retention_days": HISTORY_RETENTION_DAYS,
+                "bucket_count": history_bucket_count,
+                "latest_bucket_ts": history_latest,
+            },
         }
     )
 
@@ -1391,6 +2053,9 @@ def data():
 @app.route("/api/reset", methods=["POST"])
 def api_reset():
     reset_dashboard_state()
+    _save_parsed_state()
+    _save_behavior_state()
+    _save_history_buckets()
     _audit_write("reset", _audit_actor(), {})
     return jsonify({"ok": True})
 
@@ -1458,6 +2123,246 @@ def api_ip():
                 "tags": sorted(ip_tags.get(ip, ())),
             }
         )
+
+
+def _parse_epoch_param(raw, default_v):
+    if raw is None or raw == "":
+        return float(default_v)
+    s = str(raw).strip()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    try:
+        # Accept ISO timestamp values from UI if needed.
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return float(default_v)
+
+
+@app.route("/api/history/series")
+def api_history_series():
+    now = time.time()
+    from_ts = _parse_epoch_param(request.args.get("from"), now - (HISTORY_RETENTION_S // 4))
+    to_ts = _parse_epoch_param(request.args.get("to"), now)
+    day_f = (request.args.get("day") or "").strip()
+    if day_f:
+        try:
+            day_dt = datetime.strptime(day_f, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            from_ts = day_dt.timestamp()
+            to_ts = from_ts + 86400 - 1e-6
+        except ValueError:
+            day_f = ""
+    if to_ts < from_ts:
+        from_ts, to_ts = to_ts, from_ts
+    bucket = (request.args.get("bucket") or "minute").strip().lower()
+    bucket_s = 3600 if bucket == "hour" else 60
+    cutoff = now - HISTORY_RETENTION_S
+    from_ts = max(from_ts, cutoff)
+    with lock:
+        rows = []
+        for k in sorted(history_buckets.keys()):
+            if k < from_ts or k > to_ts:
+                continue
+            b = history_buckets[k]
+            rows.append(
+                {
+                    "ts": int(k),
+                    "total": int(b.get("total", 0)),
+                    "attacks": int(b.get("attacks", 0)),
+                    "client_errors": int(b.get("client_errors", 0)),
+                    "server_errors": int(b.get("server_errors", 0)),
+                }
+            )
+    if bucket_s > 60:
+        grouped = {}
+        for r in rows:
+            gk = int(r["ts"] // bucket_s) * bucket_s
+            g = grouped.get(gk)
+            if g is None:
+                g = {"ts": gk, "total": 0, "attacks": 0, "client_errors": 0, "server_errors": 0}
+                grouped[gk] = g
+            g["total"] += r["total"]
+            g["attacks"] += r["attacks"]
+            g["client_errors"] += r["client_errors"]
+            g["server_errors"] += r["server_errors"]
+        rows = [grouped[k] for k in sorted(grouped.keys())]
+    return jsonify(
+        {
+            "ok": True,
+            "from": from_ts,
+            "to": to_ts,
+            "day": day_f,
+            "bucket": "hour" if bucket_s == 3600 else "minute",
+            "points": rows,
+            "retention_days": HISTORY_RETENTION_DAYS,
+        }
+    )
+
+
+@app.route("/api/history/days")
+def api_history_days():
+    now = time.time()
+    cutoff = now - HISTORY_RETENTION_S
+    day_map = {}
+    with lock:
+        for ts, b in history_buckets.items():
+            if ts < cutoff:
+                continue
+            day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+            row = day_map.get(day)
+            if row is None:
+                row = {
+                    "day": day,
+                    "total": 0,
+                    "attacks": 0,
+                    "client_errors": 0,
+                    "server_errors": 0,
+                    "buckets": 0,
+                    "has_events_file": False,
+                }
+                day_map[day] = row
+            row["total"] += int(b.get("total", 0))
+            row["attacks"] += int(b.get("attacks", 0))
+            row["client_errors"] += int(b.get("client_errors", 0))
+            row["server_errors"] += int(b.get("server_errors", 0))
+            row["buckets"] += 1
+    if HISTORY_EVENTS_DIR and os.path.isdir(HISTORY_EVENTS_DIR):
+        for name in os.listdir(HISTORY_EVENTS_DIR):
+            if not name.endswith(".jsonl"):
+                continue
+            day = name[:-6]
+            if day in day_map:
+                day_map[day]["has_events_file"] = True
+            else:
+                day_map[day] = {
+                    "day": day,
+                    "total": 0,
+                    "attacks": 0,
+                    "client_errors": 0,
+                    "server_errors": 0,
+                    "buckets": 0,
+                    "has_events_file": True,
+                }
+    days = [day_map[k] for k in sorted(day_map.keys(), reverse=True)]
+    return jsonify(
+        {
+            "ok": True,
+            "days": days,
+            "latest_day": (days[0]["day"] if days else ""),
+            "retention_days": HISTORY_RETENTION_DAYS,
+        }
+    )
+
+
+@app.route("/api/history/events")
+def api_history_events():
+    now = time.time()
+    from_ts = _parse_epoch_param(request.args.get("from"), now - 86400)
+    to_ts = _parse_epoch_param(request.args.get("to"), now)
+    day_f = (request.args.get("day") or "").strip()
+    if day_f:
+        try:
+            day_dt = datetime.strptime(day_f, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            from_ts = day_dt.timestamp()
+            to_ts = from_ts + 86400 - 1e-6
+        except ValueError:
+            day_f = ""
+    if to_ts < from_ts:
+        from_ts, to_ts = to_ts, from_ts
+    cutoff = now - HISTORY_RETENTION_S
+    from_ts = max(from_ts, cutoff)
+
+    try:
+        page = max(1, int(request.args.get("page", "1") or "1"))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "100") or "100")
+    except ValueError:
+        page_size = 100
+    page_size = min(max(1, page_size), HISTORY_EVENT_PAGE_MAX)
+    ip_f = (request.args.get("ip") or "").strip()
+    ua_f = (request.args.get("ua") or "").strip().lower()
+    path_f = (request.args.get("path") or "").strip().lower()
+    status_f = (request.args.get("status") or "").strip()
+    tag_f = (request.args.get("tag") or "").strip().lower()
+
+    events = []
+    scanned = 0
+    if HISTORY_EVENTS_DIR and os.path.isdir(HISTORY_EVENTS_DIR):
+        if day_f:
+            file_names = [f"{day_f}.jsonl"]
+        else:
+            file_names = sorted(os.listdir(HISTORY_EVENTS_DIR), reverse=True)
+        for name in file_names:
+            if not name.endswith(".jsonl"):
+                continue
+            fp = os.path.join(HISTORY_EVENTS_DIR, name)
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+            except OSError:
+                continue
+            for line in reversed(lines):
+                if scanned >= HISTORY_EVENT_MAX_SCAN:
+                    break
+                scanned += 1
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                ts = float(row.get("ts_epoch", 0) or 0)
+                if ts < from_ts or ts > to_ts:
+                    continue
+                if ip_f and str(row.get("ip", "")) != ip_f:
+                    continue
+                if ua_f and ua_f not in str(row.get("ua", "")).lower():
+                    continue
+                if path_f and path_f not in str(row.get("path", row.get("uri", ""))).lower():
+                    continue
+                if status_f and str(row.get("status", "")) != status_f:
+                    continue
+                if tag_f:
+                    tags = [str(t).lower() for t in list(row.get("tags", []))]
+                    if tag_f not in tags:
+                        continue
+                events.append(
+                    {
+                        "ts": str(row.get("ts", "")),
+                        "ts_epoch": ts,
+                        "ip": str(row.get("ip", "")),
+                        "ua": str(row.get("ua", "")),
+                        "path": str(row.get("path", row.get("uri", ""))),
+                        "status": int(row.get("status", 0) or 0),
+                        "score": int(row.get("score", 0) or 0),
+                        "fingerprint": str(row.get("fingerprint", "")),
+                        "tags": [str(t) for t in list(row.get("tags", []))],
+                    }
+                )
+            if scanned >= HISTORY_EVENT_MAX_SCAN:
+                break
+
+    total_rows = len(events)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_rows = events[start:end]
+    return jsonify(
+        {
+            "ok": True,
+            "from": from_ts,
+            "to": to_ts,
+            "day": day_f,
+            "page": page,
+            "page_size": page_size,
+            "total": total_rows,
+            "scanned": scanned,
+            "rows": page_rows,
+            "retention_days": HISTORY_RETENTION_DAYS,
+        }
+    )
 
 
 # ========================
@@ -1531,6 +2436,40 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 24px;background:rgba(8,12,22,0.88);border-bottom:1px solid var(--border);backdrop-filter:blur(12px);}
 .toolbar input[type="search"]{flex:1;min-width:180px;max-width:360px;padding:7px 12px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--mono);font-size:12px;transition:border-color var(--transition),box-shadow var(--transition);outline:none;}
 .toolbar input[type="search"]:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim);}
+.hist-day-select{
+  min-width:190px;max-width:230px;padding:6px 10px;
+  border-radius:7px;border:1px solid var(--border);
+  background:rgba(255,255,255,0.04);color:var(--text);
+  font-family:var(--mono);font-size:12px;outline:none;
+  transition:border-color var(--transition),box-shadow var(--transition),color var(--transition);
+}
+.hist-day-select:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim);}
+.hist-day-select option{background:#0a101c;color:#e2e8f0;}
+.hist-table-wrap{
+  max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;
+  scrollbar-width:thin;scrollbar-color:#1e293b transparent;
+}
+.hist-table-wrap::-webkit-scrollbar{width:6px;height:6px;}
+.hist-table-wrap::-webkit-scrollbar-track{background:transparent;}
+.hist-table-wrap::-webkit-scrollbar-thumb{
+  background:linear-gradient(180deg,rgba(0,212,255,.35),rgba(30,41,59,.9));
+  border-radius:999px;
+}
+.hist-table-wrap::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(0,212,255,.55),rgba(51,65,85,.95));}
+.hist-table-wrap::-webkit-scrollbar-button{display:none;width:0;height:0;}
+/* Global scrollbar theme (dashboard + modal surfaces) */
+*{
+  scrollbar-width:thin;
+  scrollbar-color:#1e293b transparent;
+}
+*::-webkit-scrollbar{width:6px;height:6px;}
+*::-webkit-scrollbar-track{background:transparent;}
+*::-webkit-scrollbar-thumb{
+  background:linear-gradient(180deg,rgba(0,212,255,.35),rgba(30,41,59,.9));
+  border-radius:999px;
+}
+*::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(0,212,255,.55),rgba(51,65,85,.95));}
+*::-webkit-scrollbar-button{display:none;width:0;height:0;}
 .toolbar-sep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
 .toolbtn{padding:6px 13px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-dim);font-size:11px;font-family:var(--mono);cursor:pointer;white-space:nowrap;transition:border-color var(--transition),color var(--transition),box-shadow var(--transition),transform 0.1s;outline:none;}
 .toolbtn:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 10px var(--accent-glow);}
@@ -1603,6 +2542,20 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .chart-wrap{padding:12px;height:210px;position:relative;}
 /* World map */
 #worldMapWrap{padding:8px 10px;height:310px;position:relative;}
+.map-hover-tip{
+  position:fixed;display:none;z-index:99999;pointer-events:none;
+  background:var(--surface-solid);border:1px solid var(--border-bright);
+  color:var(--text);font-family:var(--mono);font-size:11px;
+  padding:5px 10px;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,0.5);
+  transform:translate(12px,-16px);white-space:nowrap;
+}
+.map-hover-readout{padding:0 10px 8px;color:var(--text-dim);font-family:var(--mono);font-size:11px;}
+.map-legend{display:flex;align-items:center;gap:10px;padding:0 10px 10px 10px;}
+.map-legend-item{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:10px;font-family:var(--mono);}
+.map-legend-swatch{width:10px;height:10px;border-radius:999px;display:inline-block;border:1px solid rgba(255,255,255,0.18);}
+.map-legend-swatch.low{background:#1e3a8a;}
+.map-legend-swatch.med{background:#0ea5e9;}
+.map-legend-swatch.high{background:#67e8f9;}
 .jvm-tooltip{background:var(--surface-solid) !important;border:1px solid var(--border-bright) !important;color:var(--text) !important;font-family:var(--mono) !important;font-size:11px !important;padding:5px 10px !important;border-radius:6px !important;box-shadow:0 4px 20px rgba(0,0,0,0.5) !important;}
 /* Alert feed */
 .alert-row{border-left:3px solid var(--danger);padding:9px 10px;margin-bottom:7px;background:rgba(6,10,16,0.6);border-radius:6px;font-size:11px;font-family:var(--mono);cursor:pointer;transition:background var(--transition),box-shadow var(--transition);box-shadow:-3px 0 10px rgba(239,68,68,0.15);}
@@ -1755,6 +2708,17 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
     <button type="button" class="toolbtn poll-opt" data-ms="5000">5s</button>
   </div>
   <div class="toolbar-sep"></div>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">History:</span>
+  <div class="poll-seg">
+    <button type="button" class="toolbtn hist-range on" data-sec="86400">24h</button>
+    <button type="button" class="toolbtn hist-range" data-sec="604800">7d</button>
+    <button type="button" class="toolbtn hist-range" data-sec="2592000">30d</button>
+  </div>
+  <select id="histDaySelect" class="hist-day-select" title="Select a specific saved UTC day">
+    <option value="">Range mode</option>
+  </select>
+  <button type="button" class="toolbtn" id="btnHistMode">History chart</button>
+  <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn" id="btnExport">Export JSON</button>
   <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn danger" id="btnClearFocus" style="display:none">Clear focus</button>
@@ -1827,8 +2791,38 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
       </div>
     </div>
     <div class="card">
+      <h2>Historical telemetry <span class="hint">aggregated and event drilldown</span></h2>
+      <div class="body" style="max-height:none">
+        <div id="historyMeta" style="margin-bottom:8px;color:var(--muted);font-family:var(--mono);font-size:11px">Loading history...</div>
+        <div class="hist-table-wrap">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
+            <thead>
+              <tr style="position:sticky;top:0;background:rgba(8,12,22,0.96)">
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Time (UTC)</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Path</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Status</th>
+                <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Score</th>
+              </tr>
+            </thead>
+            <tbody id="historyRows"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+          <button type="button" class="toolbtn" id="btnHistPrev">Prev</button>
+          <button type="button" class="toolbtn" id="btnHistNext">Next</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
       <h2>Origin countries &mdash; world map</h2>
-      <div id="worldMapWrap"><div id="worldMap" style="width:100%;height:100%"></div></div>
+      <div id="worldMapWrap"><div id="worldMap" style="width:100%;height:100%"></div><div id="mapHoverTip" class="map-hover-tip"></div></div>
+      <div id="mapHoverReadout" class="map-hover-readout">Hover country: &mdash;</div>
+      <div class="map-legend">
+        <span class="map-legend-item"><span class="map-legend-swatch low"></span>Low</span>
+        <span class="map-legend-item"><span class="map-legend-swatch med"></span>Medium</span>
+        <span class="map-legend-item"><span class="map-legend-swatch high"></span>High</span>
+      </div>
     </div>
   </div>
   <div class="sidebar" id="sidebar">
@@ -1915,8 +2909,19 @@ let newAlertsSinceBlur=0;
 let isPageVisible=true;
 let sidebarOpen=true;
 let worldMap=null;
+let countryHitsMap={};
+let mapHoverCode='';
+let mapHoverPos={x:0,y:0};
+let mapHoverPoll=null;
 let seenAlertKeys=new Set();
 let modalIp='';
+let historyRangeSec=2592000;
+let historyMode=false;
+let historyPoints=[];
+let historyPage=1;
+let historyTotal=0;
+let historySelectedDay='';
+let historyDaysLoaded=false;
 
 /* Tab visibility for alert count */
 document.addEventListener('visibilitychange',function(){
@@ -2005,26 +3010,169 @@ const statusDonut=hasChartJs?new Chart(document.getElementById('statusDonut'),{
 // ── World map ──
 function initWorldMap(){
   if(worldMap||typeof jsVectorMap==='undefined') return;
+  function regionCodeFromTarget(t){
+    if(!t) return '';
+    var el=t.closest ? t.closest('path, g, [data-code], [data-region], [id]') : t;
+    if(!el) return '';
+    var direct=(el.getAttribute && (el.getAttribute('data-code') || el.getAttribute('data-region'))) || '';
+    direct=String(direct).trim().toUpperCase();
+    if(/^[A-Z]{2}$/.test(direct)) return direct;
+    if(el.dataset){
+      var ds=(el.dataset.code || el.dataset.region || '').toString().trim().toUpperCase();
+      if(/^[A-Z]{2}$/.test(ds)) return ds;
+    }
+    var attrs=['data-code','data-region','data-name','name','id'];
+    for(var i=0;i<attrs.length;i++){
+      var raw=(el.getAttribute && el.getAttribute(attrs[i])) || '';
+      var m=String(raw).toUpperCase().match(/\b[A-Z]{2}\b/);
+      if(m) return m[0];
+    }
+    return '';
+  }
+  function mapTooltipMessage(code){
+    var cc=String(code||'').toUpperCase();
+    if(!cc || cc==='UNDEFINED') cc='??';
+    var hits=countryHitsMap[cc]||0;
+    return cc+' \u2014 '+hits+' hits';
+  }
+  function applyMapTooltip(tooltip,msg){
+    try{
+      if(!tooltip) return;
+      if(typeof tooltip.html==='function'){
+        try{ tooltip.html(msg,true); }catch(_e1){ try{ tooltip.html(msg); }catch(_e2){} }
+      }
+      if(typeof tooltip.text==='function'){
+        try{ tooltip.text(msg,true); }catch(_e3){ try{ tooltip.text(msg); }catch(_e4){} }
+      }
+      if(typeof tooltip.setText==='function'){
+        try{ tooltip.setText(msg); }catch(_e5){}
+      }
+      var candidates=[
+        tooltip,
+        tooltip.element,
+        tooltip._tooltip,
+        tooltip.selector,
+        tooltip.container,
+        tooltip.node,
+        tooltip[0]
+      ];
+      candidates.forEach(function(el){
+        try{
+          if(!el) return;
+          if(typeof el.innerHTML!=='undefined') el.innerHTML=msg;
+          if(typeof el.textContent!=='undefined') el.textContent=msg;
+        }catch(_e6){}
+      });
+    }catch(_e){}
+  }
+  function mapTip(msg,x,y){
+    var tip=document.getElementById('mapHoverTip');
+    var readout=document.getElementById('mapHoverReadout');
+    if(!tip) return;
+    tip.textContent=msg;
+    tip.style.display='block';
+    tip.style.left=Math.max(6,(x||0))+'px';
+    tip.style.top=Math.max(6,(y||0))+'px';
+    if(readout) readout.textContent='Hover country: '+msg;
+  }
+  function hideMapTip(){
+    var tip=document.getElementById('mapHoverTip');
+    var readout=document.getElementById('mapHoverReadout');
+    if(tip) tip.style.display='none';
+    if(readout) readout.textContent='Hover country: \u2014';
+  }
+  function hoveredRegionCode(mapEl){
+    if(!mapEl) return '';
+    var el=mapEl.querySelector('.jvm-region:hover,[data-code]:hover,[data-region]:hover,path:hover');
+    return regionCodeFromTarget(el);
+  }
   try{
     worldMap=new jsVectorMap({
       selector:'#worldMap',map:'world',
       backgroundColor:'transparent',zoomOnScroll:false,
+      regionTooltip:false,
       regionStyle:{
-        initial:{fill:'#0d1522',stroke:'#06080f',strokeWidth:0.4},
-        hover:{fill:'#1e293b',cursor:'pointer'}
+        initial:{fill:'#1a2e47',stroke:'#0a1421',strokeWidth:0.45,fillOpacity:0.95},
+        hover:{fill:'#2c4f74',cursor:'pointer'}
       },
-      onRegionTooltipShow:function(e,tooltip,code){
-        if(!lastPayload) return;
-        var pair=(lastPayload.countries||[]).find(function(p){return p[0]===code;});
-        tooltip.text(code+(pair?' \u2014 '+pair[1]+' req':''),true);
+      onRegionTooltipShow:function(e,tooltip,code){ applyMapTooltip(tooltip,mapTooltipMessage(code)); },
+      onRegionTipShow:function(e,tooltip,code){ applyMapTooltip(tooltip,mapTooltipMessage(code)); },
+      onRegionOver:function(e,code){
+        mapHoverCode=String(code||'').toUpperCase();
+        mapTip(mapTooltipMessage(mapHoverCode),e.clientX||0,e.clientY||0);
+      },
+      onRegionOut:function(){
+        mapHoverCode='';
+        hideMapTip();
       },
       series:{regions:[{
         attribute:'fill',
-        scale:{min:'#0a2a44',max:'#00d4ff'},
-        normalizeFunction:'polynomial',
+        scale:{
+          1:'#1e3a8a', /* low */
+          2:'#0ea5e9', /* medium */
+          3:'#06b6d4', /* high */
+          4:'#67e8f9'  /* very high */
+        },
+        normalizeFunction:'linear',
         values:{}
       }]}
     });
+    var mapEl=document.getElementById('worldMapWrap');
+    if(mapEl){
+      if(mapHoverPoll) clearInterval(mapHoverPoll);
+      mapHoverPoll=setInterval(function(){
+        var cc=hoveredRegionCode(mapEl);
+        if(!cc){
+          if(!mapHoverCode) return;
+          mapHoverCode='';
+          hideMapTip();
+          return;
+        }
+        mapHoverCode=cc;
+        mapTip(mapTooltipMessage(mapHoverCode),mapHoverPos.x||0,mapHoverPos.y||0);
+      },120);
+      mapEl.addEventListener('mousemove',function(e){
+        mapHoverPos.x=e.clientX||0;
+        mapHoverPos.y=e.clientY||0;
+        var ccByHover=hoveredRegionCode(mapEl);
+        if(ccByHover){
+          mapHoverCode=ccByHover;
+          try{
+            var p=e.target && e.target.closest ? e.target.closest('.jvm-region,path') : null;
+            if(p && p.setAttribute) p.setAttribute('title',mapTooltipMessage(mapHoverCode));
+          }catch(_e0){}
+          mapTip(mapTooltipMessage(mapHoverCode),mapHoverPos.x,mapHoverPos.y);
+          return;
+        }
+        var cc=regionCodeFromTarget(e.target);
+        if(cc){
+          mapHoverCode=cc;
+          try{
+            var p2=e.target && e.target.closest ? e.target.closest('.jvm-region,path') : null;
+            if(p2 && p2.setAttribute) p2.setAttribute('title',mapTooltipMessage(mapHoverCode));
+          }catch(_e1){}
+          mapTip(mapTooltipMessage(mapHoverCode),mapHoverPos.x,mapHoverPos.y);
+          return;
+        }
+        if(!mapHoverCode) return;
+        mapTip(mapTooltipMessage(mapHoverCode),mapHoverPos.x,mapHoverPos.y);
+      });
+      mapEl.addEventListener('mouseleave',function(){ mapHoverCode=''; hideMapTip(); });
+      mapEl.addEventListener('mouseover',function(e){
+        var cc=regionCodeFromTarget(e.target);
+        if(!cc) return;
+        mapHoverCode=cc;
+        mapHoverPos.x=e.clientX||0;
+        mapHoverPos.y=e.clientY||0;
+        mapTip(mapTooltipMessage(mapHoverCode),mapHoverPos.x,mapHoverPos.y);
+      });
+      mapEl.addEventListener('mouseout',function(e){
+        var toEl=e.relatedTarget;
+        if(toEl && mapEl.contains(toEl)) return;
+        mapHoverCode='';
+        hideMapTip();
+      });
+    }
   }catch(e){
     document.getElementById('worldMapWrap').innerHTML='<div style="color:var(--muted);text-align:center;padding:80px 0;font-family:var(--mono);font-size:12px">Map unavailable (CDN)</div>';
   }
@@ -2033,8 +3181,126 @@ function updateWorldMap(countries){
   if(!worldMap) return;
   try{
     var vals={};
-    (countries||[]).forEach(function(p){vals[p[0]]=p[1];});
+    countryHitsMap={};
+    (countries||[]).forEach(function(p){
+      var cc=String(p[0]||'').toUpperCase();
+      var n=Math.max(0,+p[1]||0);
+      if(!cc||cc.length!==2||n<=0) return;
+      countryHitsMap[cc]=n;
+      var bucket=1;
+      if(n>=1000) bucket=4;
+      else if(n>=200) bucket=3;
+      else if(n>=25) bucket=2;
+      vals[cc]=bucket;
+    });
     worldMap.series.regions[0].setValues(vals);
+  }catch(e){}
+}
+
+function historyRangeBounds(){
+  if(historySelectedDay){
+    var start=Date.parse(historySelectedDay+'T00:00:00Z');
+    if(!isNaN(start)){
+      var from=Math.floor(start/1000);
+      return {from:from,to:from+86400-1};
+    }
+  }
+  var to=Math.floor(Date.now()/1000);
+  return {from:Math.max(0,to-historyRangeSec),to:to};
+}
+
+function applyHistoryChart(points){
+  historyPoints=points||[];
+  if(!historyMode||!historyPoints.length) return;
+  var labels=historyPoints.map(function(p){
+    try{return new Date((p.ts||0)*1000).toISOString().slice(11,16);}catch(e){return '';}
+  });
+  comboChart.data.labels=labels;
+  comboChart.data.datasets[0].data=historyPoints.map(function(p){return p.total||0;});
+  comboChart.data.datasets[1].data=historyPoints.map(function(p){return p.attacks||0;});
+  comboChart.update('none');
+}
+
+async function loadHistorySeries(){
+  var b=historyRangeBounds();
+  var bucket=historySelectedDay?'minute':(historyRangeSec>172800?'hour':'minute');
+  try{
+    var q='/api/history/series?from='+b.from+'&to='+b.to+'&bucket='+bucket;
+    if(historySelectedDay) q+='&day='+encodeURIComponent(historySelectedDay);
+    var r=await fetch(q,{credentials:'same-origin'});
+    var j=await r.json();
+    if(!r.ok||!j.ok) return;
+    historyPoints=j.points||[];
+    if(historyMode) applyHistoryChart(historyPoints);
+    var sumT=0,sumA=0,sum4=0,sum5=0;
+    historyPoints.forEach(function(p){sumT+=(p.total||0);sumA+=(p.attacks||0);sum4+=(p.client_errors||0);sum5+=(p.server_errors||0);});
+    var modeLabel=historySelectedDay?('Day '+historySelectedDay):('Range '+(historyRangeSec/86400).toFixed(0)+'d');
+    document.getElementById('historyMeta').innerText=modeLabel+' | points '+historyPoints.length+' | total '+sumT+' | suspicious '+sumA+' | 4xx '+sum4+' | 5xx '+sum5;
+  }catch(e){}
+}
+
+function renderHistoryEvents(rows){
+  var el=document.getElementById('historyRows');
+  var arr=rows||[];
+  if(!arr.length){
+    el.innerHTML='<tr><td colspan="5" style="padding:10px;color:var(--muted);text-align:center">No historical events in selected range</td></tr>';
+    return;
+  }
+  el.innerHTML=arr.map(function(r){
+    return '<tr>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)">'+escapeHtml(r.ts||'')+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+escapeHtml(r.ip||'')+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.path||'')+'">'+escapeHtml(r.path||'')+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.status||0)+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.score||0)+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+async function loadHistoryEvents(){
+  var b=historyRangeBounds();
+  try{
+    var q='/api/history/events?from='+b.from+'&to='+b.to+'&page='+historyPage+'&page_size=50';
+    if(historySelectedDay) q+='&day='+encodeURIComponent(historySelectedDay);
+    if(focusIp) q+='&ip='+encodeURIComponent(focusIp);
+    var r=await fetch(q,{credentials:'same-origin'});
+    var j=await r.json();
+    if(!r.ok||!j.ok){renderHistoryEvents([]);return;}
+    historyTotal=j.total||0;
+    renderHistoryEvents(j.rows||[]);
+  }catch(e){
+    renderHistoryEvents([]);
+  }
+}
+
+async function refreshHistory(){
+  if(!historyDaysLoaded) await loadHistoryDays();
+  await loadHistorySeries();
+  await loadHistoryEvents();
+}
+
+async function loadHistoryDays(){
+  try{
+    var r=await fetch('/api/history/days',{credentials:'same-origin'});
+    var j=await r.json();
+    if(!r.ok||!j.ok) return;
+    var sel=document.getElementById('histDaySelect');
+    var keep=historySelectedDay;
+    sel.innerHTML='<option value="">Range mode</option>';
+    (j.days||[]).forEach(function(d){
+      var o=document.createElement('option');
+      o.value=d.day;
+      o.textContent=d.day+'  ('+(d.total||0)+' req)';
+      sel.appendChild(o);
+    });
+    if(keep && (j.days||[]).some(function(d){return d.day===keep;})){
+      sel.value=keep;
+      historySelectedDay=keep;
+    }else{
+      historySelectedDay='';
+      sel.value='';
+    }
+    historyDaysLoaded=true;
   }catch(e){}
 }
 
@@ -2419,6 +3685,8 @@ function setFocus(ip){
   document.getElementById('focusLbl').innerText=focusIp?('[focus: '+focusIp+']'):'';
   document.getElementById('btnClearFocus').style.display=focusIp?'inline-block':'none';
   if(lastPayload) applyRender(lastPayload);
+  historyPage=1;
+  loadHistoryEvents();
 }
 
 function applyRender(d){
@@ -2486,16 +3754,20 @@ async function load(force){
   prevKpi={rps:rpsV,peak:peakV,uniq:uniqV,errpct:errpctV,atk:atkV};
 
   /* Charts */
-  rpsHist.push(rpsV);
-  var lastAtk=(d.attack_timeline&&d.attack_timeline.length)?d.attack_timeline[d.attack_timeline.length-1]:0;
-  atkHist.push(lastAtk);
-  if(rpsHist.length>MAX) rpsHist.shift();
-  if(atkHist.length>MAX) atkHist.shift();
-  var labels=rpsHist.map(function(_,i){ return i; });
-  comboChart.data.labels=labels;
-  comboChart.data.datasets[0].data=rpsHist.slice();
-  comboChart.data.datasets[1].data=atkHist.slice();
-  comboChart.update('none');
+  if(!historyMode){
+    rpsHist.push(rpsV);
+    var lastAtk=(d.attack_timeline&&d.attack_timeline.length)?d.attack_timeline[d.attack_timeline.length-1]:0;
+    atkHist.push(lastAtk);
+    if(rpsHist.length>MAX) rpsHist.shift();
+    if(atkHist.length>MAX) atkHist.shift();
+    var labels=rpsHist.map(function(_,i){ return i; });
+    comboChart.data.labels=labels;
+    comboChart.data.datasets[0].data=rpsHist.slice();
+    comboChart.data.datasets[1].data=atkHist.slice();
+    comboChart.update('none');
+  }else{
+    applyHistoryChart(historyPoints);
+  }
   statusDonut.data.datasets[0].data=statusBuckets(d.status);
   statusDonut.update('none');
 
@@ -2526,6 +3798,7 @@ async function load(force){
   var au=d.audit_log?' | audit on':'';
   document.getElementById('foot').innerText='Server '+d.server_time+up+' | poll '+poll+au+(renderErr?' | render error':'');
   initWorldMap();
+  refreshHistory();
 }
 
 /* Sidebar toggle */
@@ -2539,6 +3812,39 @@ document.getElementById('sbToggle').addEventListener('click',function(){
 document.getElementById('btnPause').addEventListener('click',function(){ setPaused(!paused); });
 document.querySelectorAll('.poll-opt').forEach(function(b){
   b.addEventListener('click',function(){ setPaused(false); setPoll(+b.dataset.ms); });
+});
+document.querySelectorAll('.hist-range').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.hist-range').forEach(function(x){x.classList.remove('on');});
+    b.classList.add('on');
+    historySelectedDay='';
+    var hsel=document.getElementById('histDaySelect');
+    if(hsel) hsel.value='';
+    historyRangeSec=+b.dataset.sec||2592000;
+    historyPage=1;
+    refreshHistory();
+  });
+});
+document.getElementById('histDaySelect').addEventListener('change',function(e){
+  historySelectedDay=(e.target.value||'').trim();
+  historyPage=1;
+  refreshHistory();
+});
+document.getElementById('btnHistMode').addEventListener('click',function(){
+  historyMode=!historyMode;
+  document.getElementById('btnHistMode').classList.toggle('on',historyMode);
+  if(historyMode) applyHistoryChart(historyPoints);
+});
+document.getElementById('btnHistPrev').addEventListener('click',function(){
+  if(historyPage<=1) return;
+  historyPage-=1;
+  loadHistoryEvents();
+});
+document.getElementById('btnHistNext').addEventListener('click',function(){
+  var nextStart=historyPage*50;
+  if(nextStart>=historyTotal) return;
+  historyPage+=1;
+  loadHistoryEvents();
 });
 document.getElementById('btnExport').addEventListener('click',exportJson);
 document.getElementById('btnClearFocus').addEventListener('click',function(){ setFocus(''); });
@@ -2581,7 +3887,12 @@ document.getElementById('btnReset').addEventListener('click',async function(){
     comboChart.update('none');
     statusDonut.data.datasets[0].data=[0,0,0,0,0]; statusDonut.update('none');
     if(worldMap){try{worldMap.series.regions[0].setValues({});}catch(e){}}
-    setPaused(false); await load(true);
+    historySelectedDay='';
+    historyDaysLoaded=false;
+    var hsel=document.getElementById('histDaySelect');
+    if(hsel) hsel.value='';
+    historyPage=1;
+    setPaused(false); await load(true); await refreshHistory();
   }catch(e){ alert('Reset failed'); }
 });
 
@@ -2629,6 +3940,7 @@ document.addEventListener('keydown',function(e){
 
 setPoll(1500);
 load();
+refreshHistory();
 </script>
 </body>
 </html>
@@ -2641,6 +3953,10 @@ load();
 _ensure_state_dir()
 _ensure_audit_file()
 _load_bans()
+_load_parsed_state()
+_load_behavior_state()
+_load_history_buckets()
+_prune_history_event_files()
 
 if __name__ == "__main__":
     _sync_iptables_bans()
@@ -2649,4 +3965,5 @@ if __name__ == "__main__":
     threading.Thread(target=stream, daemon=True).start()
     threading.Thread(target=reset, daemon=True).start()
     threading.Thread(target=botnet_detection_worker, daemon=True).start()
+    threading.Thread(target=_state_flush_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)

@@ -1,0 +1,49 @@
+[Unit]
+Description=Sentinel SOC dashboard (Flask + Caddy log tail)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# App tree (adjust to your server):
+#   /opt/sentinel/venv/bin/python
+#   /opt/sentinel/sentinel_soc.py
+WorkingDirectory=/opt/sentinel
+
+# Python venv interpreter
+ExecStart=/opt/sentinel/venv/bin/python /opt/sentinel/sentinel_soc.py
+
+# Load secrets and options without editing the unit file
+EnvironmentFile=-/etc/sentinel/sentinel.env
+
+# If you do NOT use EnvironmentFile, set variables inline instead, e.g.:
+# Environment=LOG_PATH=/var/log/caddy/all-access.log
+# Environment=SENTINEL_STATE_DIR=/var/lib/sentinel
+# Environment=SENTINEL_IPTABLES=1
+
+Restart=on-failure
+RestartSec=3
+
+# iptables/ip6tables need CAP_NET_ADMIN; running as root is the usual choice.
+# If you run as a dedicated user, use AmbientCapabilities and add that user to no extra groups:
+User=root
+# Alternative (uncomment, set User=, and drop User=root above):
+# User=sentinel
+# Group=sentinel
+# AmbientCapabilities=CAP_NET_ADMIN
+# CapabilityBoundingSet=CAP_NET_ADMIN
+# NoNewPrivileges=yes
+
+# Hardening (optional; relax if something breaks)
+PrivateTmp=yes
+ProtectSystem=strict
+# Under ProtectSystem=strict, /var is read-only unless listed here. Include every log path you use
+# (Caddy log, optional /var/log/sentinel/audit.log if you set SENTINEL_AUDIT_LOG there).
+ReadWritePaths=/opt/sentinel /var/lib/sentinel /var/log/caddy /var/log/sentinel /tmp
+# If bans or audit log live elsewhere, add those paths to ReadWritePaths.
+
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

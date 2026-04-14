@@ -1,0 +1,210 @@
+# Recommended: log only inside (common_log) with rolling.
+# Delete the separate global { log { ... } } block from your live Caddyfile
+# if you keep import common_log everywhere -- otherwise each request can be
+# written twice to the same file (bad for GoAccess + Sentinel counts).
+# Also avoid sending Caddy's default/global JSON logger to the same path as
+# site access logs: you will mix admin.api, auto_https, and http.log.access lines.
+# Sentinel expects mostly http.log.access (or nested "request" + handled request).
+#
+# Cloudflare: trust CF edge IPs so client_ip / access logs use real visitors
+# (not only Cloudflare's TCP peer). Refresh CIDRs periodically from:
+#   https://www.cloudflare.com/ips/
+# (Or build Caddy with the cloudflare trusted_proxies module for auto-updates.)
+#
+# Replace basicauth hash with your own; rotate if the old hash was exposed.
+
+{
+	servers {
+		# Cloudflare IPv4 + IPv6 (snapshot; refresh from URL above)
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers Cf-Connecting-Ip X-Forwarded-For
+		trusted_proxies_strict
+	}
+}
+
+(common_log) {
+	log {
+		output file /var/log/caddy/all-access.log {
+			roll_size 100mb
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+}
+
+(global_protection) {
+	@badpaths {
+		path *.env* *.git* *wp-admin* *xmlrpc.php* *setup-config* *install.php* *config* *settings*
+	}
+	handle @badpaths {
+		respond 403
+	}
+
+	@bots {
+		header_regexp User-Agent (?i)(curl|python|wget|scanner|nmap|sqlmap|nikto)
+	}
+	handle @bots {
+		respond 403
+	}
+}
+
+ai.fleabot.org {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+
+	root * /opt/ai-companion-chat/dist
+	file_server
+	try_files {path} /index.html
+
+	header {
+		-Server
+		-X-Powered-By
+	}
+}
+
+www.tarkovbot.com {
+	import common_log
+	redir https://tarkovbot.com{uri} 308
+}
+
+tarkovbot.com {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+
+	reverse_proxy 127.0.0.1:3001 {
+		header_up Host {http.request.host}
+		header_up X-Forwarded-Proto {http.request.scheme}
+		header_up X-Forwarded-Host {http.request.host}
+		header_up X-Forwarded-Port {http.request.port}
+	}
+}
+
+nullpaste.org {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+
+	@forbidden path /.env* /settings.json /config.js /config.json
+	handle @forbidden {
+		respond 404
+	}
+
+	@report path /report.html
+	handle @report {
+		basicauth {
+			admin $2a$14$REPLACE_WITH_YOUR_OWN_BCRYPT
+		}
+
+		root * /var/www/html
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3003 {
+			header_up Host {http.request.host}
+			header_up X-Forwarded-Proto {http.request.scheme}
+			header_up X-Forwarded-Host {http.request.host}
+			header_up X-Forwarded-Port {http.request.port}
+		}
+	}
+
+	header {
+		-Server
+		-X-Powered-By
+	}
+}
+
+indexaro.com {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+	reverse_proxy 127.0.0.1:3000
+}
+
+fluxconvert.app, www.fluxconvert.app {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+
+	request_body {
+		max_size 64MB
+	}
+
+	handle /_next/static/* {
+		reverse_proxy 127.0.0.1:3004
+		header Cache-Control "public, max-age=31536000, immutable"
+	}
+
+	reverse_proxy 127.0.0.1:3004 {
+		header_up Host {http.request.host}
+		header_up X-Forwarded-Proto {http.request.scheme}
+		header_up X-Forwarded-Host {http.request.host}
+		header_up X-Forwarded-Port {http.request.port}
+		transport http {
+			read_timeout  120s
+			write_timeout 120s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+www.neuroprompt.dev {
+	import common_log
+	redir https://neuroprompt.dev{uri} 308
+}
+
+neuroprompt.dev {
+	import common_log
+	import global_protection
+
+	encode gzip zstd
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:3005 {
+			flush_interval -1
+			header_up Host {http.request.host}
+			header_up X-Forwarded-Proto {http.request.scheme}
+			header_up X-Forwarded-Host {http.request.host}
+			header_up X-Forwarded-Port {http.request.port}
+			transport http {
+				read_timeout  120s
+				write_timeout 120s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3005 {
+			header_up Host {http.request.host}
+			header_up X-Forwarded-Proto {http.request.scheme}
+			header_up X-Forwarded-Host {http.request.host}
+			header_up X-Forwarded-Port {http.request.port}
+			transport http {
+				read_timeout  120s
+				write_timeout 120s
+			}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

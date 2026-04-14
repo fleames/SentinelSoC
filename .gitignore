@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+
+# Secrets and local state (copy from sentinel.env.example)
+.env
+*.env
+!*.env.example
+
+# Runtime / deploy artifacts next to the app
+sentinel-audit.jsonl
+bans.json
+*.log
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/

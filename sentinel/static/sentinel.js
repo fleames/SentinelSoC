@@ -596,19 +596,27 @@ function renderThreats(el,rows){
   if(q&&q.trim()){var t=q.toLowerCase();r=r.filter(function(tw){return String(tw.ip+tw.asn+tw.top_path+(tw.country||'')+(tw.tags||[]).join(' ')).toLowerCase().includes(t);});}
   if(focusIp) r=r.filter(function(tw){return tw.ip===focusIp;});
   if(!r.length){el.innerHTML='<div class="th-row"><span></span><span class="ip" style="color:var(--muted)">'+(focusIp?'No threats for focus':'No scored sources')+'</span></div>';return;}
-  var maxScore=Math.max.apply(null,r.map(function(t){return t.score||0;}).concat([1]));
+  // Use a global score floor so bars reflect absolute severity, not just relative rank.
+  var absMax=Math.max.apply(null,r.map(function(t){return t.score||0;}).concat([50]));
   el.innerHTML=r.map(function(t,i){
     var hl=(focusIp&&t.ip===focusIp)?' hl-focus':'',rankCls=i===0?' rank1':'',rankNumCls=i===0?' r1':'';
-    var tp=(t.tags&&t.tags.length)?t.tags.map(function(x){return '<span class="tag tag-'+escapeAttr(x)+'">'+escapeHtml(x)+'</span>';}).join(''):'';
-    var filled=Math.max(1,Math.round((t.score/maxScore)*5));
-    var barColor=t.score>=10?'#dc2626':t.score>=5?'#ea580c':'#f59e0b';
-    var barGlow=t.score>=10?'0 0 6px rgba(220,38,38,0.6)':t.score>=5?'0 0 6px rgba(234,88,12,0.5)':'0 0 4px rgba(245,158,11,0.4)';
-    var segs='';for(var s=0;s<5;s++){segs+='<div class="sc-seg'+(s<filled?' lit':'')+'" style="'+(s<filled?'background:'+barColor+';box-shadow:'+barGlow:'')+'"></div>';}
+    // Show at most 3 tags inline; extras go to the title tooltip
+    var allTags=t.tags||[];
+    var visibleTags=allTags.slice(0,3);
+    var hiddenCount=allTags.length-visibleTags.length;
+    var tp=visibleTags.map(function(x){return '<span class="tag tag-'+escapeAttr(x)+'">'+escapeHtml(x)+'</span>';}).join('');
+    if(hiddenCount>0) tp+='<span class="tag" style="opacity:.55">+'+hiddenCount+'</span>';
+    // Continuous bar: width proportional to score vs absMax, min 3%
+    var pct=Math.max(3,Math.round((t.score/absMax)*100));
+    var barColor=t.score>=20?'var(--danger)':t.score>=10?'#ea580c':'var(--warn)';
+    var barGlow=t.score>=20?'var(--danger-glow)':t.score>=10?'rgba(234,88,12,0.5)':'rgba(245,158,11,0.4)';
     var flag=ccFlag(t.country||'');
-    return '<div class="th-row'+hl+rankCls+'" data-ip="'+escapeAttr(t.ip)+'" title="'+escapeAttr((t.asn||'')+' '+t.top_path)+'">'
+    var tipText=(t.asn||'')+(t.top_path?' \u2014 '+t.top_path:'')+(allTags.length?' | '+allTags.join(', '):'');
+    return '<div class="th-row'+hl+rankCls+'" data-ip="'+escapeAttr(t.ip)+'" title="'+escapeAttr(tipText)+'">'
       +'<span class="rank'+rankNumCls+'">'+(i+1)+'</span>'
-      +'<span class="ip">'+escapeHtml(t.ip)+(tp?' '+tp:'')+'</span>'
-      +'<div class="sc-segs">'+segs+'<span class="sc-num">'+t.score+'</span></div>'
+      +'<span class="ip">'+escapeHtml(t.ip)+'</span>'
+      +(tp?'<span class="th-tags">'+tp+'</span>':'<span class="th-tags"></span>')
+      +'<div class="sc-bar-wrap"><div class="sc-bar-track"><div class="sc-bar" style="width:'+pct+'%;background:'+barColor+';box-shadow:0 0 6px '+barGlow+'"></div></div><span class="sc-num">'+t.score+'</span></div>'
       +'<span class="hits">'+t.hits+'</span>'
       +'<span class="cc" title="'+escapeHtml(t.country||'?')+'">'+(flag||escapeHtml(t.country||'?'))+'</span>'
       +'</div>';

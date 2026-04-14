@@ -75,6 +75,14 @@ ALERT_QUEUE_MAX = 200
 SCORE_ALERT_THRESHOLD = 5
 GEO_WORKERS = 4
 
+# Botnet campaign detection
+BOTNET_WINDOW_S = 300       # sliding window width (5 min)
+BOTNET_CHECK_INTERVAL = 10  # re-evaluate every N seconds
+BOTNET_MIN_IPS = 3          # minimum distinct IPs to open a campaign
+BOTNET_MIN_SUBNETS = 2      # minimum distinct /24 subnets (rules out one misconfigured host)
+BOTNET_MIN_ASNS = 2         # minimum distinct ASNs (rules out one ISP)
+BOTNET_EXPIRY_S = 1800      # drop campaigns silent for 30 min
+
 # ========================
 # DATA
 # ========================
@@ -126,6 +134,13 @@ stream_parse_debug = {
 banned_ips = set()
 muted_hits = Counter()
 
+# Botnet campaign tracking
+# suspicious_hit_buffer holds recent scored hits for cross-IP correlation.
+# deque is thread-safe for append in CPython; reads are done under lock snapshot.
+suspicious_hit_buffer = deque(maxlen=10000)
+botnet_campaigns = {}   # trigger_uri -> campaign dict
+botnet_lock = threading.Lock()
+
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."
 
@@ -164,6 +179,139 @@ def _save_bans():
         os.replace(tmp, BAN_LIST_PATH)
     except OSError:
         pass
+
+
+def _ip_subnet(ip):
+    """Return /24 (IPv4) or /48 (IPv6) prefix string for subnet-diversity checks."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        if addr.version == 4:
+            return str(ipaddress.ip_network(f"{ip}/24", strict=False).network_address)
+        return str(ipaddress.ip_network(f"{ip}/48", strict=False).network_address)
+    except ValueError:
+        return ip
+
+
+def _campaign_id(uri):
+    """Stable 6-char hex ID for a botnet campaign keyed by trigger URI."""
+    import hashlib
+    return "BN-" + hashlib.md5(uri.encode("utf-8", errors="replace")).hexdigest()[:6].upper()
+
+
+def _normalize_uri_campaign(uri):
+    """
+    Collapse URI to a canonical attack signature that survives minor randomization.
+    Strips query string; keeps path lowercased.  Longer paths are trimmed so that
+    '/wp-admin/install.php?...' and '/wp-admin/install.php' map to the same key.
+    """
+    path = (uri or "/").split("?")[0].split("#")[0].lower().rstrip("/") or "/"
+    # Collapse numeric or hex segments that botnets sometimes randomize, e.g.
+    # /probe_a3f2/ -> /probe_*/   so near-identical scans cluster together.
+    import re
+    path = re.sub(r"/[0-9a-f]{6,}/", "/*/", path)
+    return path
+
+
+def detect_botnets():
+    """
+    Scan suspicious_hit_buffer and update botnet_campaigns.
+    Called every BOTNET_CHECK_INTERVAL seconds by botnet_detection_worker().
+
+    Algorithm:
+    1. Snapshot hits from the last BOTNET_WINDOW_S seconds.
+    2. Group by normalized URI (attack signature).
+    3. For groups with >= BOTNET_MIN_IPS distinct IPs from >= BOTNET_MIN_SUBNETS
+       distinct /24 subnets AND >= BOTNET_MIN_ASNS distinct ASNs -> campaign.
+    4. Confidence = weighted score of IP diversity, ASN spread, geographic spread.
+    5. Expire campaigns inactive for BOTNET_EXPIRY_S.
+    """
+    now = time.time()
+    cutoff = now - BOTNET_WINDOW_S
+
+    # Thread-safe snapshot (deque iteration is safe under the GIL but we copy to avoid
+    # mutation mid-loop from the stream thread).
+    buf = [h for h in list(suspicious_hit_buffer) if h["ts"] >= cutoff]
+
+    by_uri = defaultdict(list)
+    for h in buf:
+        by_uri[h["uri"]].append(h)
+
+    active_uris = set()
+
+    with botnet_lock:
+        for uri, hits in by_uri.items():
+            distinct_ips = {h["ip"] for h in hits}
+            distinct_subnets = {h["subnet"] for h in hits}
+            distinct_asns = {
+                h["asn"] for h in hits
+                if h["asn"] not in ("", "Unknown", PLACEHOLDER_ASN)
+            }
+            distinct_countries = {
+                h["country"] for h in hits
+                if h["country"] not in ("", "??", PLACEHOLDER_CC)
+            }
+
+            if (
+                len(distinct_ips) < BOTNET_MIN_IPS
+                or len(distinct_subnets) < BOTNET_MIN_SUBNETS
+                or len(distinct_asns) < BOTNET_MIN_ASNS
+            ):
+                continue
+
+            active_uris.add(uri)
+
+            # Confidence: weighted sum, capped at 100.
+            # ASN diversity carries most weight (hardest for attacker to fake).
+            # IP count uses diminishing returns via min() cap.
+            conf = min(100, int(
+                min(len(distinct_ips), 20) * 2     # up to 40 pts
+                + min(len(distinct_asns), 8) * 6   # up to 48 pts
+                + min(len(distinct_countries), 4) * 3  # up to 12 pts
+            ))
+
+            if uri in botnet_campaigns:
+                c = botnet_campaigns[uri]
+                c["last_active"] = now
+                c["total_hits"] = len(hits)
+                c["ip_count"] = len(distinct_ips)
+                c["ips"] = sorted(distinct_ips)[:30]
+                c["subnet_count"] = len(distinct_subnets)
+                c["asn_count"] = len(distinct_asns)
+                c["asns"] = sorted(distinct_asns)[:10]
+                c["country_count"] = len(distinct_countries)
+                c["countries"] = sorted(distinct_countries)
+                c["confidence"] = conf
+            else:
+                botnet_campaigns[uri] = {
+                    "id": _campaign_id(uri),
+                    "trigger_uri": uri,
+                    "detected_at": min(h["ts"] for h in hits),
+                    "last_active": now,
+                    "total_hits": len(hits),
+                    "ip_count": len(distinct_ips),
+                    "ips": sorted(distinct_ips)[:30],
+                    "subnet_count": len(distinct_subnets),
+                    "asn_count": len(distinct_asns),
+                    "asns": sorted(distinct_asns)[:10],
+                    "country_count": len(distinct_countries),
+                    "countries": sorted(distinct_countries),
+                    "confidence": conf,
+                }
+
+        # Expire stale campaigns
+        for uri in [u for u, c in botnet_campaigns.items()
+                    if now - c["last_active"] > BOTNET_EXPIRY_S]:
+            del botnet_campaigns[uri]
+
+
+def botnet_detection_worker():
+    """Background thread: run botnet detection on a fixed interval."""
+    while True:
+        time.sleep(BOTNET_CHECK_INTERVAL)
+        try:
+            detect_botnets()
+        except Exception:
+            pass
 
 
 def _normalize_client_ip(s):
@@ -952,6 +1100,16 @@ def stream():
                 ip_scores[ip] += s
                 if s > 0:
                     attack_counter += 1
+                    # Feed botnet correlation buffer (outside this lock to avoid contention,
+                    # but deque.append is atomic under the GIL so appending here is safe).
+                    suspicious_hit_buffer.append({
+                        "ts": time.time(),
+                        "ip": ip,
+                        "uri": _normalize_uri_campaign(uri),
+                        "asn": asn_u,
+                        "country": country_u,
+                        "subnet": _ip_subnet(ip),
+                    })
 
                 if s >= SCORE_ALERT_THRESHOLD:
                     recent_alerts.appendleft(
@@ -1059,6 +1217,9 @@ def reset_dashboard_state():
         stream_parse_debug["json_roots"] = 0
         stream_parse_debug["dicts_yielded"] = 0
         stream_parse_debug["buffer_overflows"] = 0
+        suspicious_hit_buffer.clear()
+    with botnet_lock:
+        botnet_campaigns.clear()
 
 
 # ========================
@@ -1125,49 +1286,56 @@ def data():
         muted_dict = {k: int(muted_hits[k]) for k in banned_sorted}
         ip_tags_payload = {k: sorted(v) for k, v in ip_tags.items() if v}
 
-        return jsonify(
-            {
-                "rps": rps,
-                "peak": peak_rps,
-                "total": total,
-                "unique_ips": uniq,
-                "client_errors": client_err,
-                "server_errors": server_err,
-                "error_rate_pct": err_rate,
-                "threat_level": level,
-                "threat_color": level_color,
-                "attack_rps_last_tick": attack_rps,
-                "stream_uptime_s": uptime_s,
-                "ips": ips.most_common(15),
-                "domains": domains.most_common(10),
-                "referers": referers.most_common(10),
-                "paths": paths.most_common(10),
-                "status": dict(status_codes),
-                "asn": asn_counts.most_common(10),
-                "countries": countries.most_common(12),
-                "scores": dict(ip_scores),
-                "geo": ip_geo,
-                "top_threats": threats_enriched,
-                "alerts": alerts_list,
-                "rps_timeline": rps_timeline,
-                "attack_timeline": attack_timeline,
-                "server_time": datetime.now(timezone.utc).isoformat(),
-                "banned_ips": banned_sorted,
-                "muted_hits": muted_dict,
-                "muted_total": muted_total,
-                "iptables_enabled": IPTABLES_ENABLED,
-                "iptables_chain": IPTABLES_CHAIN,
-                "auth_enabled": AUTH_ENABLED,
-                "audit_log": bool(AUDIT_LOG_PATH),
-                "audit_path": AUDIT_LOG_PATH,
-                "state_dir": STATE_DIR,
-                "ban_list_path": BAN_LIST_PATH,
-                "log_path": _effective_log_path(),
-                "log_from_start": _effective_log_from_start(),
-                "stream_parse_debug": dict(stream_parse_debug),
-                "ip_tags": ip_tags_payload,
-            }
+    # Snapshot botnet campaigns under their own lock (after releasing main lock)
+    with botnet_lock:
+        campaigns_snapshot = sorted(
+            botnet_campaigns.values(), key=lambda c: -c["confidence"]
         )
+
+    return jsonify(
+        {
+            "rps": rps,
+            "peak": peak_rps,
+            "total": total,
+            "unique_ips": uniq,
+            "client_errors": client_err,
+            "server_errors": server_err,
+            "error_rate_pct": err_rate,
+            "threat_level": level,
+            "threat_color": level_color,
+            "attack_rps_last_tick": attack_rps,
+            "stream_uptime_s": uptime_s,
+            "ips": ips.most_common(15),
+            "domains": domains.most_common(10),
+            "referers": referers.most_common(10),
+            "paths": paths.most_common(10),
+            "status": dict(status_codes),
+            "asn": asn_counts.most_common(10),
+            "countries": countries.most_common(12),
+            "scores": dict(ip_scores),
+            "geo": ip_geo,
+            "top_threats": threats_enriched,
+            "alerts": alerts_list,
+            "botnet_campaigns": campaigns_snapshot,
+            "rps_timeline": rps_timeline,
+            "attack_timeline": attack_timeline,
+            "server_time": datetime.now(timezone.utc).isoformat(),
+            "banned_ips": banned_sorted,
+            "muted_hits": muted_dict,
+            "muted_total": muted_total,
+            "iptables_enabled": IPTABLES_ENABLED,
+            "iptables_chain": IPTABLES_CHAIN,
+            "auth_enabled": AUTH_ENABLED,
+            "audit_log": bool(AUDIT_LOG_PATH),
+            "audit_path": AUDIT_LOG_PATH,
+            "state_dir": STATE_DIR,
+            "ban_list_path": BAN_LIST_PATH,
+            "log_path": _effective_log_path(),
+            "log_from_start": _effective_log_from_start(),
+            "stream_parse_debug": dict(stream_parse_debug),
+            "ip_tags": ip_tags_payload,
+        }
+    )
 
 
 @app.route("/api/reset", methods=["POST"])
@@ -1468,6 +1636,24 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .path-row-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1;position:relative;}
 .path-row-hits{font-size:11px;color:var(--accent);font-weight:700;flex-shrink:0;position:relative;font-variant-numeric:tabular-nums;}
 .path-row-pct{font-size:9px;color:var(--muted);flex-shrink:0;min-width:32px;text-align:right;position:relative;font-variant-numeric:tabular-nums;}
+/* Botnet campaigns */
+.bn-hdr{display:grid;grid-template-columns:70px 1fr 40px 36px 80px 64px;gap:8px;padding:7px 12px;font-size:9px;font-family:var(--mono);color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.07em;align-items:center;}
+.bn-row{display:grid;grid-template-columns:70px 1fr 40px 36px 80px 64px;gap:8px;padding:7px 12px;font-family:var(--mono);font-size:11px;border-bottom:1px solid rgba(255,255,255,0.03);align-items:center;cursor:default;transition:background var(--transition);}
+.bn-row:hover{background:rgba(0,212,255,0.03);}
+.bn-id{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--warn);}
+.bn-uri{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8;}
+.bn-num{text-align:right;font-variant-numeric:tabular-nums;color:var(--text);}
+.bn-flags{font-size:11px;letter-spacing:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bn-conf{display:flex;align-items:center;gap:5px;}
+.bn-conf-track{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,0.06);overflow:hidden;}
+.bn-conf-fill{height:100%;border-radius:2px;transition:width .6s cubic-bezier(0.4,0,0.2,1);}
+.bn-conf-fill.lo {background:var(--ok);}
+.bn-conf-fill.med{background:var(--warn);}
+.bn-conf-fill.hi {background:var(--danger);}
+.bn-conf-val{font-size:9px;font-weight:700;min-width:24px;text-align:right;flex-shrink:0;}
+.bn-conf-val.lo {color:var(--ok);}
+.bn-conf-val.med{color:var(--warn);}
+.bn-conf-val.hi {color:var(--danger);}
 /* Muted IPs */
 .ban-inp{flex:1;min-width:0;padding:7px 11px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color var(--transition),box-shadow var(--transition);}
 .ban-inp:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim);}
@@ -1576,6 +1762,19 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
       <div class="card"><h2>Requested paths</h2><div class="body" id="paths"></div></div>
       <div class="card"><h2>Referers</h2><div class="body" id="refs"></div></div>
       <div class="card"><h2>ASN / org</h2><div class="body" id="asn"></div></div>
+    </div>
+    <div class="card">
+      <h2>Botnet campaigns <span class="hint">distributed coordinated attacks &mdash; 5 min window</span></h2>
+      <div class="body" style="max-height:none;padding:0">
+        <div class="bn-hdr">
+          <span>Campaign</span><span>Trigger URI</span>
+          <span style="text-align:right">IPs</span>
+          <span style="text-align:right">ASNs</span>
+          <span>Countries</span>
+          <span style="text-align:right">Confidence</span>
+        </div>
+        <div id="botnets"></div>
+      </div>
     </div>
     <div class="card">
       <h2>Origin countries &mdash; world map</h2>
@@ -1993,6 +2192,32 @@ function statusBuckets(st){
   return a;
 }
 
+function confCls(n){ return n>=70?'hi':n>=40?'med':'lo'; }
+
+function renderBotnetCampaigns(el,campaigns){
+  var arr=campaigns||[];
+  if(!arr.length){
+    el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No active campaigns detected &mdash; waiting for coordinated multi-IP probes</span></div>';
+    return;
+  }
+  el.innerHTML=arr.map(function(c){
+    var cls=confCls(c.confidence);
+    var flags=(c.countries||[]).slice(0,7).map(function(cc){return ccFlag(cc)||cc;}).join('');
+    var age=timeAgo(new Date(c.detected_at*1000).toISOString());
+    return '<div class="bn-row" title="Campaign '+escapeAttr(c.id)+'\nFirst seen: '+age+'\nSubnets: '+c.subnet_count+'\nHits: '+c.total_hits+'">'
+      +'<span class="bn-id">'+escapeHtml(c.id)+'</span>'
+      +'<span class="bn-uri" title="'+escapeAttr(c.trigger_uri)+'">'+escapeHtml(c.trigger_uri)+'</span>'
+      +'<span class="bn-num">'+c.ip_count+'</span>'
+      +'<span class="bn-num">'+c.asn_count+'</span>'
+      +'<span class="bn-flags">'+flags+'</span>'
+      +'<div class="bn-conf">'
+        +'<div class="bn-conf-track"><div class="bn-conf-fill '+cls+'" style="width:'+c.confidence+'%"></div></div>'
+        +'<span class="bn-conf-val '+cls+'">'+c.confidence+'</span>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+
 function renderBanList(d){
   var el=document.getElementById('banList');
   var bans=d.banned_ips||[];
@@ -2148,6 +2373,7 @@ function applyRender(d){
   renderStatus(document.getElementById('status'),d.status);
   renderAlerts(document.getElementById('alerts'),d.alerts);
   renderThreats(document.getElementById('threats'),d.top_threats);
+  renderBotnetCampaigns(document.getElementById('botnets'),d.botnet_campaigns);
   updateWorldMap(d.countries);
 }
 
@@ -2359,4 +2585,5 @@ if __name__ == "__main__":
         threading.Thread(target=geo_worker, daemon=True).start()
     threading.Thread(target=stream, daemon=True).start()
     threading.Thread(target=reset, daemon=True).start()
+    threading.Thread(target=botnet_detection_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)

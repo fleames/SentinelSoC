@@ -286,6 +286,48 @@
   </div>
 </div>
 
+<!-- Botnet campaign detail modal -->
+<div class="modal-backdrop" id="bnModalBg" aria-hidden="true">
+  <div class="modal bn-modal" role="dialog" aria-label="Campaign detail">
+    <div class="modal-banner">
+      <div class="modal-banner-top">
+        <div class="modal-ip-line">
+          <span class="bn-id" id="bnModalId" style="font-size:13px;letter-spacing:.12em"></span>
+          <span id="bnModalConfBadge" style="margin-left:12px"></span>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="toolbtn" id="bnModalClose">&#10005;</button>
+        </div>
+      </div>
+      <div style="padding:4px 0 6px;font-family:var(--mono);font-size:11px;color:#94a3b8;word-break:break-all" id="bnModalUri"></div>
+    </div>
+    <div class="modal-stats" id="bnModalStats">
+      <div class="modal-stat"><div class="modal-stat-lbl">Total hits</div><div class="modal-stat-val" id="bnMHits">&mdash;</div></div>
+      <div class="modal-stat"><div class="modal-stat-lbl">Unique IPs</div><div class="modal-stat-val" id="bnMIpCount">&mdash;</div></div>
+      <div class="modal-stat"><div class="modal-stat-lbl">Subnets</div><div class="modal-stat-val" id="bnMSubnets">&mdash;</div></div>
+      <div class="modal-stat"><div class="modal-stat-lbl">ASNs</div><div class="modal-stat-val" id="bnMAsns">&mdash;</div></div>
+      <div class="modal-stat"><div class="modal-stat-lbl">Countries</div><div class="modal-stat-val" id="bnMCountries">&mdash;</div></div>
+      <div class="modal-stat"><div class="modal-stat-lbl">Burst peak /10s</div><div class="modal-stat-val" id="bnMBurst">&mdash;</div></div>
+    </div>
+    <div class="bn-modal-meta">
+      <span class="bn-modal-meta-item">Detected <span id="bnMDetected" style="color:var(--text)"></span></span>
+      <span class="bn-modal-meta-item">Last active <span id="bnMLastActive" style="color:var(--text)"></span></span>
+      <span class="bn-modal-meta-item" id="bnMSharedUaWrap" style="display:none">Shared UA <span id="bnMSharedUa" style="color:var(--warn)"></span> IPs</span>
+      <span class="bn-modal-meta-item" id="bnMSharedSeqWrap" style="display:none">Shared seq <span id="bnMSharedSeq" style="color:var(--warn)"></span> IPs</span>
+    </div>
+    <div class="bn-modal-body">
+      <div class="bn-modal-col">
+        <div class="bn-modal-col-hd">IPs in campaign <span id="bnMIpHint" style="opacity:.5"></span></div>
+        <div id="bnModalIpList"></div>
+      </div>
+      <div class="bn-modal-col">
+        <div class="bn-modal-col-hd">ASNs &amp; countries</div>
+        <div id="bnModalAsnList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/static/sentinel.js" defer></script>
 </body>
 </html>

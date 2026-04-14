@@ -433,6 +433,22 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .bn-conf-val.lo {color:var(--ok);}
 .bn-conf-val.med{color:var(--warn);}
 .bn-conf-val.hi {color:var(--danger);}
+/* Botnet campaign modal */
+.bn-modal{max-width:780px;width:100%;}
+.bn-row{cursor:pointer;}
+.bn-modal-meta{display:flex;flex-wrap:wrap;gap:16px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);}
+.bn-modal-meta-item{white-space:nowrap;}
+.bn-modal-body{display:grid;grid-template-columns:1fr 1fr;max-height:52vh;overflow:hidden;}
+.bn-modal-col{overflow-y:auto;min-height:0;}
+.bn-modal-col:first-child{border-right:1px solid var(--border);}
+.bn-modal-col-hd{padding:5px 12px;font-size:9px;font-family:var(--mono);color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.07em;position:sticky;top:0;background:var(--surface);z-index:1;}
+.bn-modal-ip-row{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid rgba(255,255,255,0.03);font-family:var(--mono);font-size:11px;cursor:pointer;transition:background var(--transition);}
+.bn-modal-ip-row:hover{background:rgba(0,212,255,0.06);}
+.bn-modal-ip-row .ip{color:var(--accent);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bn-modal-asn-row{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:11px;}
+.bn-modal-asn-row .flag{font-size:13px;flex-shrink:0;}
+.bn-modal-asn-row .asn{color:var(--text-dim);font-family:var(--mono);font-size:10px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bn-conf-badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;}
 /* Muted IPs */
 .ban-inp{flex:1;min-width:0;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.09);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color var(--transition),box-shadow var(--transition);backdrop-filter:blur(8px);}
 .ban-inp:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim),0 0 24px rgba(0,229,255,0.12);}

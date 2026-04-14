@@ -18,6 +18,7 @@ let mapHoverCode='';
 let mapHoverPos={x:0,y:0};
 let mapHoverPoll=null;
 let seenAlertKeys=new Set();
+let bnCampaignMap={};
 let modalIp='';
 let historyRangeSec=2592000;
 let historyMode=false;
@@ -640,6 +641,8 @@ function confCls(n){ return n>=70?'hi':n>=40?'med':'lo'; }
 
 function renderBotnetCampaigns(el,campaigns){
   var arr=campaigns||[];
+  bnCampaignMap={};
+  arr.forEach(function(c){ bnCampaignMap[c.id]=c; });
   if(!arr.length){
     el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No active campaigns detected &mdash; waiting for coordinated multi-IP probes</span></div>';
     return;
@@ -648,7 +651,7 @@ function renderBotnetCampaigns(el,campaigns){
     var cls=confCls(c.confidence);
     var flags=(c.countries||[]).slice(0,7).map(function(cc){return ccFlag(cc)||cc;}).join('');
     var age=timeAgo(new Date(c.detected_at*1000).toISOString());
-    return '<div class="bn-row" title="Campaign '+escapeAttr(c.id)+'\\nFirst seen: '+age+'\\nSubnets: '+c.subnet_count+'\\nHits: '+c.total_hits+'">'
+    return '<div class="bn-row" data-bn-id="'+escapeAttr(c.id)+'" title="Click to view campaign detail">'
       +'<span class="bn-id">'+escapeHtml(c.id)+'</span>'
       +'<span class="bn-uri" title="'+escapeAttr(c.trigger_uri)+'">'+escapeHtml(c.trigger_uri)+'</span>'
       +'<span class="bn-num">'+c.ip_count+'</span>'
@@ -734,6 +737,79 @@ function exportJson(){
 
 /* IP Modal */
 function closeModal(){ document.getElementById('modalBg').classList.remove('open'); }
+
+/* Botnet campaign modal */
+function closeBnModal(){ document.getElementById('bnModalBg').classList.remove('open'); }
+
+function openBnModal(id){
+  var c=bnCampaignMap[id];
+  if(!c) return;
+  var cls=confCls(c.confidence);
+  var clsColor=cls==='hi'?'var(--danger)':cls==='med'?'var(--warn)':'var(--ok)';
+
+  document.getElementById('bnModalId').textContent=c.id;
+  document.getElementById('bnModalConfBadge').innerHTML=
+    '<span class="bn-conf-badge" style="color:'+clsColor+'">'
+    +'<span style="font-size:10px">&#9679;</span> '+c.confidence+'% confidence'
+    +'</span>';
+  document.getElementById('bnModalUri').textContent=c.trigger_uri;
+  document.getElementById('bnMHits').textContent=(c.total_hits||0).toLocaleString();
+  document.getElementById('bnMIpCount').textContent=c.ip_count||0;
+  document.getElementById('bnMSubnets').textContent=c.subnet_count||0;
+  document.getElementById('bnMAsns').textContent=c.asn_count||0;
+  document.getElementById('bnMCountries').textContent=c.country_count||0;
+  document.getElementById('bnMBurst').textContent=c.burst_peak_10s||0;
+  document.getElementById('bnMDetected').textContent=timeAgo(new Date(c.detected_at*1000).toISOString());
+  document.getElementById('bnMLastActive').textContent=timeAgo(new Date(c.last_active*1000).toISOString());
+
+  var uaWrap=document.getElementById('bnMSharedUaWrap');
+  if(c.shared_ua_ips>0){
+    document.getElementById('bnMSharedUa').textContent=c.shared_ua_ips;
+    uaWrap.style.display='';
+  } else { uaWrap.style.display='none'; }
+
+  var seqWrap=document.getElementById('bnMSharedSeqWrap');
+  if(c.shared_seq_ips>0){
+    document.getElementById('bnMSharedSeq').textContent=c.shared_seq_ips;
+    seqWrap.style.display='';
+  } else { seqWrap.style.display='none'; }
+
+  // IP list
+  var ips=c.ips||[];
+  var ipTotal=c.ip_count||ips.length;
+  document.getElementById('bnMIpHint').textContent=ips.length<ipTotal?'(showing '+ips.length+' of '+ipTotal+')':'';
+  var geo=lastPayload&&lastPayload.geo||{};
+  document.getElementById('bnModalIpList').innerHTML=ips.length
+    ? ips.map(function(ip){
+        var g=geo[ip]||{}, cc=g.country||'', flag=ccFlag(cc)||'';
+        return '<div class="bn-modal-ip-row" data-ip="'+escapeAttr(ip)+'">'
+          +(flag?'<span style="font-size:12px">'+flag+'</span>':'')
+          +'<span class="ip">'+escapeHtml(ip)+'</span>'
+          +(cc&&cc!=='??'?'<span style="font-size:10px;color:var(--muted)">'+escapeHtml(cc)+'</span>':'')
+          +'</div>';
+      }).join('')
+    : '<div style="padding:10px 12px;color:var(--muted);font-size:11px">No IP detail available</div>';
+
+  // ASN + country list
+  var asns=c.asns||[];
+  var countries=c.countries||[];
+  var asnHtml=asns.map(function(a){
+    return '<div class="bn-modal-asn-row"><span class="asn">'+escapeHtml(a)+'</span></div>';
+  }).join('');
+  var ccHtml=countries.map(function(cc){
+    var flag=ccFlag(cc)||'';
+    return '<div class="bn-modal-asn-row">'
+      +(flag?'<span class="flag">'+flag+'</span>':'')
+      +'<span class="asn">'+escapeHtml(cc)+'</span>'
+      +'</div>';
+  }).join('');
+  document.getElementById('bnModalAsnList').innerHTML=
+    (asnHtml?'<div style="padding:5px 12px;font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase">ASNs</div>'+asnHtml:'')
+    +(ccHtml?'<div style="padding:5px 12px;font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;border-top:1px solid var(--border)">Countries</div>'+ccHtml:'')
+    ||'<div style="padding:10px 12px;color:var(--muted);font-size:11px">No data</div>';
+
+  document.getElementById('bnModalBg').classList.add('open');
+}
 
 
 
@@ -1259,7 +1335,7 @@ document.body.addEventListener('click',function(e){
 });
 
 document.addEventListener('keydown',function(e){
-  if(e.key==='Escape'){ closeModal(); return; }
+  if(e.key==='Escape'){ closeBnModal(); closeModal(); return; }
   if(e.key==='/'&&document.activeElement.tagName!=='INPUT'){ e.preventDefault(); document.getElementById('q').focus(); }
 });
 
@@ -1321,6 +1397,18 @@ function startAuditPoll(){
   loadAudit();
   auditPollTimer=setInterval(loadAudit,5000);
 }
+
+document.getElementById('bnModalClose').addEventListener('click', closeBnModal);
+document.getElementById('bnModalBg').addEventListener('click', function(e){ if(e.target===this) closeBnModal(); });
+
+/* Campaign row click → open detail modal */
+document.addEventListener('click', function(e){
+  var bnRow=e.target.closest('.bn-row');
+  if(bnRow&&bnRow.dataset.bnId){ openBnModal(bnRow.dataset.bnId); return; }
+  /* IP row inside campaign modal → open IP detail */
+  var bnIpRow=e.target.closest('.bn-modal-ip-row');
+  if(bnIpRow&&bnIpRow.dataset.ip){ closeBnModal(); toggleIpFocus(bnIpRow.dataset.ip); return; }
+});
 
 document.addEventListener('click',async function(e){
   /* Ban from audit log row */

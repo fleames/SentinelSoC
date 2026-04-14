@@ -6,7 +6,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 
-from flask import Blueprint, Response, jsonify
+from flask import Blueprint, Response, jsonify, request
 
 from sentinel import config, state
 from sentinel.botnet import _campaign_for_api
@@ -183,6 +183,50 @@ def data():
 @bp.route("/api/storage")
 def api_storage():
     return jsonify(get_storage_stats())
+
+
+@bp.route("/api/settings", methods=["GET"])
+def api_settings_get():
+    from sentinel import settings
+    return jsonify({"groups": settings.get_all()})
+
+
+@bp.route("/api/settings", methods=["POST"])
+def api_settings_post():
+    from sentinel import settings
+    from sentinel.auth import _audit_write, _audit_actor
+    body = request.get_json(silent=True) or {}
+    action = body.get("action", "set")
+
+    if action == "reset_all":
+        settings.reset_all()
+        _audit_write("settings_reset_all", _audit_actor(), {})
+        return jsonify({"ok": True, "groups": settings.get_all()})
+
+    if action == "reset_one":
+        key = body.get("key", "")
+        if key not in settings.SCHEMA:
+            return jsonify({"error": "unknown key"}), 400
+        settings.reset_one(key)
+        _audit_write("settings_reset", _audit_actor(), {"key": key})
+        return jsonify({"ok": True, "groups": settings.get_all()})
+
+    # action == "set" (default)
+    updates = body.get("updates", {})
+    if not updates or not isinstance(updates, dict):
+        return jsonify({"error": "missing updates dict"}), 400
+    applied = {}
+    errors = {}
+    for key, raw in updates.items():
+        try:
+            val = settings.apply_one(key, raw)
+            applied[key] = val
+        except (ValueError, TypeError) as e:
+            errors[key] = str(e)
+    if errors:
+        return jsonify({"ok": False, "applied": applied, "errors": errors}), 422
+    _audit_write("settings_changed", _audit_actor(), {"applied": applied})
+    return jsonify({"ok": True, "applied": applied, "groups": settings.get_all()})
 
 
 @bp.route("/api/reset", methods=["POST"])

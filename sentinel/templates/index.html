@@ -68,6 +68,7 @@
   <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn danger" id="btnClearFocus" style="display:none">Clear focus</button>
   <button type="button" class="toolbtn danger" id="btnReset">Reset</button>
+  <button type="button" class="toolbtn" id="btnSettings" title="Runtime settings">&#9881; Settings</button>
   <span style="color:var(--muted);font-size:11px;font-family:var(--mono);margin-left:4px"><kbd>/</kbd> search &nbsp;<kbd>Esc</kbd> close</span>
 </div>
 
@@ -264,6 +265,24 @@
       <div class="modal-paths-hd"><span>Requested paths</span><span>Hits &nbsp; %</span></div>
       <div class="path-list" id="modalPaths"></div>
     </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-backdrop" id="settingsBg" aria-hidden="true">
+  <div class="modal settings-modal" role="dialog" aria-label="Runtime settings">
+    <div class="modal-banner">
+      <div class="modal-banner-top">
+        <div class="modal-ip-line"><span class="modal-ip" style="font-size:15px">&#9881; Runtime Settings</span></div>
+        <div class="modal-actions">
+          <button type="button" class="toolbtn" id="settingsSave">Save changes</button>
+          <button type="button" class="toolbtn" id="settingsResetAll" style="opacity:.7">Reset all</button>
+          <button type="button" class="toolbtn" id="settingsClose">&#10005;</button>
+        </div>
+      </div>
+    </div>
+    <div id="settingsStatus" style="display:none;padding:8px 16px;font-family:var(--mono);font-size:11px"></div>
+    <div id="settingsBody" style="padding:12px 16px;overflow-y:auto;max-height:70vh"></div>
   </div>
 </div>
 

@@ -18,9 +18,11 @@ from sentinel.persistence import (
     _prune_history_event_files,
 )
 from sentinel.app import create_app, start_background_threads
+from sentinel.settings import load as _load_settings
 
 _ensure_state_dir()
 _ensure_audit_file()
+_load_settings()   # apply any persisted runtime overrides before threads start
 _load_bans()
 _load_parsed_state()
 _load_behavior_state()

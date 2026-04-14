@@ -1352,6 +1352,153 @@ document.getElementById('btnClearAudit').addEventListener('click',async function
 
 startAuditPoll();
 
+/* ---- Settings modal ---- */
+var settingsData=[];   // last fetched groups
+
+function openSettings(){
+  document.getElementById('settingsBg').classList.add('open');
+  document.getElementById('settingsStatus').style.display='none';
+  fetchSettings();
+}
+function closeSettings(){
+  document.getElementById('settingsBg').classList.remove('open');
+}
+
+async function fetchSettings(){
+  try{
+    var r=await fetch('/api/settings',{credentials:'same-origin'});
+    var j=await r.json();
+    settingsData=j.groups||[];
+    renderSettings(settingsData);
+  }catch(e){
+    document.getElementById('settingsBody').innerHTML='<div style="color:var(--danger);font-family:var(--mono);font-size:12px">Failed to load settings.</div>';
+  }
+}
+
+function renderSettings(groups){
+  var h='';
+  groups.forEach(function(g){
+    h+='<div class="settings-group">';
+    h+='<div class="settings-group-title">'+escapeHtml(g.group)+'</div>';
+    g.settings.forEach(function(s){
+      var inputId='setting-'+s.key;
+      var changed=s.value!==s.default;
+      var inputHtml='';
+      if(s.type==='bool'){
+        inputHtml='<input type="checkbox" class="settings-input" id="'+inputId+'" data-key="'+escapeAttr(s.key)+'" data-type="bool"'+(s.value?' checked':'')+'/>';
+      }else{
+        inputHtml='<input type="number" class="settings-input'+(changed?' modified':'')+'" id="'+inputId+'"'
+          +' data-key="'+escapeAttr(s.key)+'" data-type="'+escapeAttr(s.type)+'"'
+          +' value="'+escapeAttr(String(s.value))+'"'
+          +(s.min!=null?' min="'+s.min+'"':'')
+          +(s.max!=null?' max="'+s.max+'"':'')+'/>';
+      }
+      h+='<div class="settings-row">';
+      h+='<div><div class="settings-label">'+escapeHtml(s.label)+'</div><div class="settings-desc">'+escapeHtml(s.desc)+'</div></div>';
+      h+=inputHtml;
+      h+='<button class="settings-reset-btn" data-key="'+escapeAttr(s.key)+'" title="Reset to default">&#8635;</button>';
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  document.getElementById('settingsBody').innerHTML=h;
+
+  // Mark modified inputs on change
+  document.querySelectorAll('.settings-input[type="number"]').forEach(function(inp){
+    inp.addEventListener('input',function(){
+      var key=inp.dataset.key;
+      var orig=null;
+      settingsData.forEach(function(g){g.settings.forEach(function(s){if(s.key===key)orig=s.default;});});
+      var changed=parseFloat(inp.value)!==orig;
+      inp.classList.toggle('modified',changed);
+    });
+  });
+}
+
+async function saveSettings(){
+  var updates={};
+  document.querySelectorAll('.settings-input').forEach(function(inp){
+    var key=inp.dataset.key;
+    if(!key) return;
+    if(inp.type==='checkbox'){
+      updates[key]=inp.checked;
+    }else{
+      updates[key]=inp.type==='number'?parseFloat(inp.value):inp.value;
+    }
+  });
+  var statusEl=document.getElementById('settingsStatus');
+  statusEl.style.display='';
+  statusEl.className='settings-status-ok';
+  statusEl.innerText='Saving...';
+  try{
+    var r=await fetch('/api/settings',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'set',updates:updates})
+    });
+    var j=await r.json();
+    if(j.ok){
+      settingsData=j.groups||settingsData;
+      renderSettings(settingsData);
+      statusEl.className='settings-status-ok';
+      statusEl.innerText='Saved successfully.';
+    }else{
+      var errs=Object.entries(j.errors||{}).map(function(e){return e[0]+': '+e[1];}).join('; ');
+      statusEl.className='settings-status-err';
+      statusEl.innerText='Errors: '+errs;
+    }
+  }catch(e){
+    statusEl.className='settings-status-err';
+    statusEl.innerText='Save failed: '+e.message;
+  }
+}
+
+async function resetAllSettings(){
+  if(!confirm('Reset all settings to their environment/default values?')) return;
+  var r=await fetch('/api/settings',{
+    method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'reset_all'})
+  });
+  var j=await r.json();
+  if(j.ok){
+    settingsData=j.groups||settingsData;
+    renderSettings(settingsData);
+    var statusEl=document.getElementById('settingsStatus');
+    statusEl.style.display='';
+    statusEl.className='settings-status-ok';
+    statusEl.innerText='All settings reset to defaults.';
+  }
+}
+
+document.getElementById('settingsBg').addEventListener('click',function(e){
+  if(e.target.id==='settingsBg') closeSettings();
+});
+document.getElementById('settingsClose').addEventListener('click',closeSettings);
+document.getElementById('settingsSave').addEventListener('click',saveSettings);
+document.getElementById('settingsResetAll').addEventListener('click',resetAllSettings);
+document.getElementById('btnSettings').addEventListener('click',openSettings);
+
+// Per-key reset button
+document.getElementById('settingsBody').addEventListener('click',async function(e){
+  var btn=e.target.closest('.settings-reset-btn');
+  if(!btn) return;
+  var key=btn.dataset.key;
+  var r=await fetch('/api/settings',{
+    method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'reset_one',key:key})
+  });
+  var j=await r.json();
+  if(j.ok){settingsData=j.groups||settingsData;renderSettings(settingsData);}
+});
+
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'&&document.getElementById('settingsBg').classList.contains('open')){
+    closeSettings();
+  }
+});
+
 setPoll(1500);
 load();
 refreshHistory();

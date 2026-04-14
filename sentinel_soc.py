@@ -69,7 +69,9 @@ PERSISTENT_THREAT_DAYS = int(os.environ.get("SENTINEL_PERSISTENT_DAYS", "3") or 
 # Auth brute-force: auto-ban IPs that fail HTTP Basic Auth this many times. 0 = disabled.
 AUTH_FAIL_BAN_THRESHOLD = int(os.environ.get("SENTINEL_AUTH_FAIL_BAN", "10") or "10")
 # Remote ingest: Bearer key for POST /api/ingest. Empty = no key required (only safe on trusted nets).
-INGEST_KEY = os.environ.get("SENTINEL_INGEST_KEY", "").strip()
+INGEST_KEY      = os.environ.get("SENTINEL_INGEST_KEY",   "").strip()
+IPINFO_TOKEN    = os.environ.get("SENTINEL_IPINFO_TOKEN", "3582d5bf47b48b").strip()
+ABUSEIPDB_KEY   = os.environ.get("SENTINEL_ABUSEIPDB_KEY", "").strip()
 
 # Optional HTTP Basic Auth for / /data /api/* (set both user and password). Empty = no auth.
 AUTH_USER = os.environ.get("SENTINEL_AUTH_USER", "").strip()
@@ -137,6 +139,7 @@ peak_rps = 0
 attack_counter = 0
 client_err = 0
 server_err = 0
+bytes_served = 0
 
 rps_timeline = []
 attack_timeline = []
@@ -146,7 +149,7 @@ recent_alerts = deque(maxlen=ALERT_QUEUE_MAX)
 geo_queue = deque()
 geo_lock = threading.Lock()
 
-# Requests seen before ip-api returns: fold into real ASN/country on resolve (no stuck "Resolving..." row).
+# Requests seen before ipinfo returns: fold into real ASN/country on resolve (no stuck "Resolving..." row).
 pending_geo_hits = defaultdict(int)
 
 lock = threading.Lock()
@@ -192,6 +195,9 @@ ip_behavior = defaultdict(
 ip_recent_paths = defaultdict(lambda: deque(maxlen=4))
 ip_days_seen = defaultdict(set)   # ip -> set of "YYYY-MM-DD" UTC day strings
 auth_fail_counts = Counter()      # ip -> consecutive auth failures (cleared on ban)
+ipenrich_cache   = {}             # ip -> Shodan InternetDB result cached 1h
+ipinfo_cache     = {}             # ip -> ipinfo.io result cached 1h
+abuseipdb_cache  = {}             # ip -> AbuseIPDB result cached 1h
 sources = Counter()               # source label -> total events ingested
 behavior_signal_counts = Counter()
 history_buckets = {}
@@ -476,6 +482,7 @@ def _save_parsed_state():
             "attack_counter": int(attack_counter),
             "client_err": int(client_err),
             "server_err": int(server_err),
+            "bytes_served": int(bytes_served),
             "stream_started_at": float(stream_started_at or 0.0),
             "ips": [[str(k), int(v)] for k, v in ips.items()],
             "domains": [[str(k), int(v)] for k, v in domains.items()],
@@ -532,7 +539,7 @@ def _save_parsed_state():
 
 
 def _load_parsed_state():
-    global total, rps, peak_rps, current_second, attack_counter, client_err, server_err, stream_started_at
+    global total, rps, peak_rps, current_second, attack_counter, client_err, server_err, bytes_served, stream_started_at
     if not PARSED_STATE_PATH:
         return
     try:
@@ -550,6 +557,7 @@ def _load_parsed_state():
         attack_counter = int(data.get("attack_counter", 0) or 0)
         client_err = int(data.get("client_err", 0) or 0)
         server_err = int(data.get("server_err", 0) or 0)
+        bytes_served = int(data.get("bytes_served", 0) or 0)
         ss = float(data.get("stream_started_at", 0) or 0.0)
         stream_started_at = ss if ss > 0 else time.time()
 
@@ -1073,6 +1081,12 @@ def _touch_audit_file(path):
 
 def _ensure_state_dir():
     if not STATE_DIR:
+        print(
+            "[sentinel] WARNING: SENTINEL_STATE_DIR is not set -- all metrics (bytes_served, "
+            "totals, history, behavior) will be lost on restart. "
+            "Set SENTINEL_STATE_DIR=/var/lib/sentinel (or any writable path) to enable persistence.",
+            file=sys.stderr, flush=True,
+        )
         return
     try:
         os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
@@ -1140,18 +1154,19 @@ def _fetch_geo(ip):
     if ip in geo_cache:
         return geo_cache[ip]
     try:
+        params = {"token": IPINFO_TOKEN} if IPINFO_TOKEN else {}
         r = requests.get(
-            f"http://ip-api.com/json/{ip}?fields=status,message,countryCode,as,isp",
-            timeout=2,
-            allow_redirects=False,
+            f"https://ipinfo.io/{ip}/json",
+            params=params,
+            timeout=4,
         )
         r.raise_for_status()
         d = r.json()
-        if d.get("status") != "success":
-            raise ValueError(d.get("message", "ip-api lookup failed"))
+        if "bogon" in d or d.get("error"):
+            raise ValueError(d.get("error", {}).get("message", "ipinfo bogon/error"))
         geo_cache[ip] = {
-            "country": d.get("countryCode", "??"),
-            "asn": f"{d.get('as', '?')} | {d.get('isp', '?')}",
+            "country": d.get("country") or "??",
+            "asn": d.get("org") or "Unknown",
         }
     except Exception:
         geo_cache[ip] = {"country": "??", "asn": "Unknown"}
@@ -1708,7 +1723,7 @@ def iter_log_lines(path, from_start=False):
 
 def _process_log_event(data, source=""):
     """Process one Caddy access-log dict. Returns 'ok', 'noreq', or 'banned'."""
-    global total, current_second, attack_counter, client_err, server_err
+    global total, current_second, attack_counter, client_err, server_err, bytes_served
 
     req, status = _parse_caddy_access_line(data)
     if not req:
@@ -1770,6 +1785,10 @@ def _process_log_event(data, source=""):
     with lock:
         total += 1
         current_second += 1
+        try:
+            bytes_served += int(data.get("size") or 0)
+        except (TypeError, ValueError):
+            pass
 
         ips[ip] += 1
         domains[host] += 1
@@ -2002,7 +2021,7 @@ def reset():
 
 def reset_dashboard_state():
     """Clear all counters, timelines, geo cache, and alerts. Log reader thread keeps running."""
-    global rps, total, current_second, peak_rps, attack_counter, client_err, server_err, stream_started_at
+    global rps, total, current_second, peak_rps, attack_counter, client_err, server_err, bytes_served, stream_started_at
     with geo_lock:
         geo_queue.clear()
     with lock:
@@ -2028,6 +2047,7 @@ def reset_dashboard_state():
         attack_counter = 0
         client_err = 0
         server_err = 0
+        bytes_served = 0
         rps_timeline.clear()
         attack_timeline.clear()
         stream_started_at = time.time()
@@ -2147,6 +2167,7 @@ def data():
         alerts_list = list(recent_alerts)[:50]
 
         uptime_s = int(time.time() - stream_started_at) if stream_started_at else None
+        bytes_served_now = int(bytes_served)
         muted_total = int(sum(muted_hits.values()))
         sources_snapshot = dict(sources)
         banned_sorted = sorted(banned_ips)
@@ -2222,6 +2243,7 @@ def data():
             "banned_ips": banned_sorted,
             "muted_hits": muted_dict,
             "muted_total": muted_total,
+            "bytes_served": bytes_served_now,
             "iptables_enabled": IPTABLES_ENABLED,
             "iptables_chain": IPTABLES_CHAIN,
             "auth_enabled": AUTH_ENABLED,
@@ -2368,6 +2390,109 @@ def api_ip():
                 "tags": sorted(ip_tags.get(ip, ())),
             }
         )
+
+
+def _fetch_shodan(ip):
+    """Fetch Shodan InternetDB for ip. Returns dict or None on error."""
+    try:
+        r = requests.get(f"https://internetdb.shodan.io/{ip}", timeout=5)
+        if r.status_code == 404:
+            return {"ports": [], "vulns": [], "tags": [], "hostnames": []}
+        r.raise_for_status()
+        d = r.json()
+        return {
+            "ports":     list(d.get("ports") or []),
+            "vulns":     list(d.get("vulns") or []),
+            "tags":      list(d.get("tags") or []),
+            "hostnames": list(d.get("hostnames") or []),
+        }
+    except Exception:
+        return None
+
+
+def _fetch_ipinfo(ip):
+    """Fetch ipinfo.io for ip. Returns dict or None on error."""
+    try:
+        params = {"token": IPINFO_TOKEN} if IPINFO_TOKEN else {}
+        r = requests.get(f"https://ipinfo.io/{ip}/json", params=params, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        return {
+            "org":      str(d.get("org") or ""),
+            "hostname": str(d.get("hostname") or ""),
+            "city":     str(d.get("city") or ""),
+            "region":   str(d.get("region") or ""),
+            "country":  str(d.get("country") or ""),
+            "timezone": str(d.get("timezone") or ""),
+            "abuse_contact": str((d.get("abuse") or {}).get("email") or ""),
+        }
+    except Exception:
+        return None
+
+
+def _fetch_abuseipdb(ip):
+    """Fetch AbuseIPDB v2 check for ip. Returns dict or None on error / no key."""
+    if not ABUSEIPDB_KEY:
+        return None
+    try:
+        r = requests.get(
+            "https://api.abuseipdb.com/api/v2/check",
+            headers={"Key": ABUSEIPDB_KEY, "Accept": "application/json"},
+            params={"ipAddress": ip, "maxAgeInDays": "90"},
+            timeout=5,
+        )
+        r.raise_for_status()
+        d = r.json().get("data") or {}
+        return {
+            "abuse_score":   int(d.get("abuseConfidenceScore") or 0),
+            "total_reports": int(d.get("totalReports") or 0),
+            "usage_type":    str(d.get("usageType") or ""),
+            "isp":           str(d.get("isp") or ""),
+            "domain":        str(d.get("domain") or ""),
+            "country":       str(d.get("countryCode") or ""),
+            "is_whitelisted": bool(d.get("isWhitelisted")),
+        }
+    except Exception:
+        return None
+
+
+@app.route("/api/ipenrich")
+def api_ipenrich():
+    ip = (request.args.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"error": "missing ip"}), 400
+    now = time.time()
+
+    # Check caches
+    shodan_cached   = ipenrich_cache.get(ip)
+    ipinfo_cached   = ipinfo_cache.get(ip)
+    abuse_cached    = abuseipdb_cache.get(ip)
+    def _fresh(c): return c is not None and now - c.get("ts", 0) < 3600
+    if _fresh(shodan_cached) and _fresh(ipinfo_cached) and (not ABUSEIPDB_KEY or _fresh(abuse_cached)):
+        return jsonify({
+            "ok": True, "cached": True,
+            "shodan":    {k: v for k, v in shodan_cached.items() if k != "ts"},
+            "ipinfo":    {k: v for k, v in ipinfo_cached.items()  if k != "ts"},
+            "abuseipdb": {k: v for k, v in abuse_cached.items()  if k != "ts"} if abuse_cached else {},
+        })
+
+    shodan_data  = shodan_cached  if _fresh(shodan_cached)  else _fetch_shodan(ip)
+    ipinfo_data  = ipinfo_cached  if _fresh(ipinfo_cached)  else _fetch_ipinfo(ip)
+    abuse_data   = abuse_cached   if _fresh(abuse_cached)   else _fetch_abuseipdb(ip)
+
+    if shodan_data is not None:
+        ipenrich_cache[ip]  = {**shodan_data, "ts": now}
+    if ipinfo_data is not None:
+        ipinfo_cache[ip]    = {**ipinfo_data,  "ts": now}
+    if abuse_data is not None:
+        abuseipdb_cache[ip] = {**abuse_data,   "ts": now}
+
+    return jsonify({
+        "ok": True, "cached": False,
+        "shodan":    shodan_data or {},
+        "ipinfo":    ipinfo_data or {},
+        "abuseipdb": abuse_data  or {},
+    })
 
 
 def _parse_epoch_param(raw, default_v):
@@ -3061,6 +3186,10 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
     <div class="kpi-hd"><div class="label">Muted (excl.)</div></div>
     <div class="val" id="mutedTotal">0</div>
   </div>
+  <div class="kpi ok" id="kpi-bytes">
+    <div class="kpi-hd"><div class="label">Data served</div></div>
+    <div class="val" id="bytesServed">0 B</div>
+  </div>
 </div>
 
 <div class="layout" id="layout">
@@ -3194,6 +3323,9 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
         <div class="modal-stat"><div class="modal-stat-lbl">Threat score</div><div class="modal-stat-val" id="mStatScore">&mdash;</div></div>
         <div class="modal-stat"><div class="modal-stat-lbl">Unique paths</div><div class="modal-stat-val" id="mStatPaths">&mdash;</div></div>
         <div class="modal-stat"><div class="modal-stat-lbl">Classification</div><div class="modal-stat-val" id="mStatClass">&mdash;</div></div>
+        <div class="modal-stat" id="mStatEnrichWrap" style="display:none"><div class="modal-stat-lbl">Shodan</div><div class="modal-stat-val" id="mStatEnrich">&mdash;</div></div>
+        <div class="modal-stat" id="mStatIpinfoWrap" style="display:none"><div class="modal-stat-lbl">IPInfo</div><div class="modal-stat-val" id="mStatIpinfo">&mdash;</div></div>
+        <div class="modal-stat" id="mStatAbuseWrap" style="display:none"><div class="modal-stat-lbl">AbuseIPDB</div><div class="modal-stat-val" id="mStatAbuse">&mdash;</div></div>
       </div>
     </div>
     <div class="modal-geo-strip" id="modalGeoStrip" style="display:none"></div>
@@ -3563,7 +3695,7 @@ function renderHistoryEvents(rows){
   el.innerHTML=arr.map(function(r){
     return '<tr>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)">'+escapeHtml(r.ts||'')+'</td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+escapeHtml(r.ip||'')+'</td>'
+      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right"><span class="hist-ip-link" data-ip="'+escapeAttr(r.ip||'')+'" style="color:var(--accent);cursor:pointer;font-weight:700" title="Click to drill down">'+escapeHtml(r.ip||'')+'</span></td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.host||'')+'">'+escapeHtml(r.host||'')+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.path||'')+'">'+escapeHtml(r.path||'')+'</td>'
       +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.status||0)+'</td>'
@@ -3620,6 +3752,14 @@ async function loadHistoryDays(){
 }
 
 /* Helpers */
+function fmtBytes(n){
+  if(n===undefined||n===null) return '0 B';
+  if(n<1024) return n+' B';
+  if(n<1048576) return (n/1024).toFixed(1)+' KB';
+  if(n<1073741824) return (n/1048576).toFixed(1)+' MB';
+  if(n<1099511627776) return (n/1073741824).toFixed(2)+' GB';
+  return (n/1099511627776).toFixed(2)+' TB';
+}
 function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -3941,6 +4081,12 @@ async function openIpModal(ip){
   document.getElementById('mStatPaths').innerText='\u2014';
   document.getElementById('mStatClass').innerText='...';
   document.getElementById('mStatClass').className='modal-stat-val';
+  document.getElementById('mStatEnrichWrap').style.display='none';
+  document.getElementById('mStatEnrich').innerText='\u2014';
+  document.getElementById('mStatIpinfoWrap').style.display='none';
+  document.getElementById('mStatIpinfo').innerText='\u2014';
+  document.getElementById('mStatAbuseWrap').style.display='none';
+  document.getElementById('mStatAbuse').innerText='\u2014';
   document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">Loading\u2026</div>';
   document.getElementById('modalBg').classList.add('open');
   try{
@@ -3948,8 +4094,7 @@ async function openIpModal(ip){
     var j=await res.json();
     if(!res.ok){
       document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--danger);font-family:var(--mono);font-size:12px;text-align:center">'+escapeHtml(j.error||'Error')+'</div>';
-      return;
-    }
+    } else {
     var g=j.geo||{}, cc=g.country||'', flag=ccFlag(cc);
     var asnRaw=g.asn||'', asnParts=asnRaw.split(' | ');
     var asnNum=asnParts[0]||'', isp=asnParts[1]||asnParts[0]||'';
@@ -4014,9 +4159,68 @@ async function openIpModal(ip){
           +'</div>';
       }).join('');
     }
+    } // end else (res.ok)
   }catch(e){
     document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--danger);font-family:var(--mono);font-size:12px;text-align:center">Request failed</div>';
   }
+  // Shodan InternetDB + IPInfo -- fire-and-forget, does not block modal open
+  try{
+    var er=await fetch('/api/ipenrich?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
+    if(er.ok){
+      var ej=await er.json();
+      if(ej.ok){
+        // Shodan
+        var sd=ej.shodan||{};
+        var sWrap=document.getElementById('mStatEnrichWrap');
+        var sEl=document.getElementById('mStatEnrich');
+        if(sWrap&&sEl){
+          var sParts=[];
+          if(sd.ports&&sd.ports.length) sParts.push(sd.ports.length+' port'+(sd.ports.length===1?'':'s')+': '+sd.ports.slice(0,8).join(', ')+(sd.ports.length>8?'...':''));
+          if(sd.vulns&&sd.vulns.length) sParts.push(sd.vulns.length+' CVE'+(sd.vulns.length===1?'':'s')+': '+sd.vulns.slice(0,3).join(', ')+(sd.vulns.length>3?'...':''));
+          if(sd.tags&&sd.tags.length) sParts.push('tags: '+sd.tags.join(', '));
+          if(sd.hostnames&&sd.hostnames.length) sParts.push(sd.hostnames.slice(0,3).join(', ')+(sd.hostnames.length>3?'...':''));
+          if(Object.keys(sd).length){
+            sWrap.style.display='';
+            sEl.innerText=sParts.length?sParts.join(' | '):'not indexed';
+            sEl.className='modal-stat-val '+(sd.vulns&&sd.vulns.length?'hi':'');
+          }
+        }
+        // IPInfo
+        var ii=ej.ipinfo||{};
+        var iWrap=document.getElementById('mStatIpinfoWrap');
+        var iEl=document.getElementById('mStatIpinfo');
+        if(iWrap&&iEl){
+          var iParts=[];
+          if(ii.org) iParts.push(ii.org);
+          if(ii.city||ii.region||ii.country) iParts.push([ii.city,ii.region,ii.country].filter(Boolean).join(', '));
+          if(ii.timezone) iParts.push(ii.timezone);
+          if(ii.abuse_contact) iParts.push('abuse: '+ii.abuse_contact);
+          if(iParts.length){
+            iWrap.style.display='';
+            iEl.innerText=iParts.join(' | ');
+            iEl.className='modal-stat-val';
+          }
+        }
+        // AbuseIPDB
+        var ab=ej.abuseipdb||{};
+        var aWrap=document.getElementById('mStatAbuseWrap');
+        var aEl=document.getElementById('mStatAbuse');
+        if(aWrap&&aEl&&(ab.abuse_score!=null||ab.total_reports!=null)){
+          var abParts=[];
+          if(ab.abuse_score!=null) abParts.push('score: '+ab.abuse_score+'%');
+          if(ab.total_reports) abParts.push(ab.total_reports+' report'+(ab.total_reports===1?'':'s'));
+          if(ab.usage_type) abParts.push(ab.usage_type);
+          if(ab.is_whitelisted) abParts.push('whitelisted');
+          if(abParts.length){
+            aWrap.style.display='';
+            aEl.innerText=abParts.join(' | ');
+            var sc=ab.abuse_score||0;
+            aEl.className='modal-stat-val '+(sc>=75?'hi':sc>=25?'med':'ok');
+          }
+        }
+      }
+    }
+  }catch(_e){}
 }
 
 function setFocus(ip){
@@ -4087,6 +4291,7 @@ async function load(force){
   document.getElementById('errpct').innerText=errpctV+'%';
   document.getElementById('atk').innerText=atkV;
   document.getElementById('mutedTotal').innerText=d.muted_total||0;
+  document.getElementById('bytesServed').innerText=fmtBytes(d.bytes_served||0);
 
   /* KPI color thresholds */
   kpiLevel('kpi-rps',    rpsV,    20, 80);
@@ -4261,7 +4466,7 @@ document.getElementById('modalCopy').addEventListener('click',function(){
 document.getElementById('modalExtLink').addEventListener('click',function(e){
   e.preventDefault();
   if(!modalIp) return;
-  window.open('http://ip-api.com/json/'+encodeURIComponent(modalIp),'_blank','noopener');
+  window.open('https://ipinfo.io/'+encodeURIComponent(modalIp),'_blank','noopener');
 });
 document.getElementById('modalBan').addEventListener('click',async function(){
   if(!modalIp) return;
@@ -4282,6 +4487,8 @@ document.body.addEventListener('click',function(e){
   if(th&&th.dataset.ip){ toggleIpFocus(th.dataset.ip); return; }
   var ar=e.target.closest('.alert-row');
   if(ar&&ar.dataset.ip){ toggleIpFocus(ar.dataset.ip); return; }
+  var hi=e.target.closest('.hist-ip-link');
+  if(hi&&hi.dataset.ip){ toggleIpFocus(hi.dataset.ip); return; }
 });
 
 document.addEventListener('keydown',function(e){
@@ -4320,7 +4527,7 @@ function renderAudit(entries){
       +'</div>'
       +'<div style="color:var(--muted);font-size:10px;display:flex;gap:6px;flex-wrap:wrap">'
       +'<span>'+escapeHtml(ts)+'</span>'
-      +(targetIp?'<span style="color:var(--accent)">\u2192 '+escapeHtml(targetIp)+'</span>':'')
+      +(targetIp?'<span style="color:var(--accent)">\u2192 <span class="hist-ip-link" data-ip="'+escapeAttr(targetIp)+'" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Click to drill down">'+escapeHtml(targetIp)+'</span></span>':'')
       +'</div>'
       +'</div>';
   }

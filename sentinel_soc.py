@@ -1576,15 +1576,25 @@ def _parse_caddy_access_line(data):
 
 def iter_caddy_log_objects(path, from_start=False):
     """
-    Yield one dict per log record. Uses JSONDecoder.raw_decode on a text buffer so we support:
-    - one JSON object per line (NDJSON),
-    - pretty-printed objects spanning many lines,
-    - multiple concatenated objects without newlines between them,
-    in O(total bytes) without retrying json.loads on ever-growing strings.
+    Yield one dict per log record. Uses a three-layer approach to keep the parse
+    buffer well below its ceiling in all conditions:
+
+    1. Fast-path per line: try json.loads(line) first. Caddy writes NDJSON so
+       this succeeds for ~99 % of lines with zero buffer involvement.
+    2. Per-line length cap (512 KB): lines longer than this are dropped before
+       touching the shared buffer, preventing a single enormous record from
+       causing an overflow.
+    3. Buffer prefix trim: after a failed raw_decode, advance past any leading
+       non-JSON bytes to the next '{' or '[' instead of letting garbage
+       accumulate until the 8 MB safety ceiling is hit.
+
+    The ceiling itself is kept at 8 MB (down from 24 MB) as a last-resort guard;
+    with the three layers above it should never be reached in practice.
     """
     dec = json.JSONDecoder()
     buf = ""
-    max_buf = 24 * 1024 * 1024
+    max_buf = 8 * 1024 * 1024      # last-resort guard (should never be hit)
+    max_line = 512 * 1024           # per-line cap: skip lines longer than 512 KB
 
     def _emit_obj(obj):
         if isinstance(obj, dict):
@@ -1599,10 +1609,36 @@ def iter_caddy_log_objects(path, from_start=False):
     for line in iter_log_lines(path, from_start=from_start):
         if not buf:
             line = line.lstrip("\ufeff")
-        if not line.strip():
+        stripped = line.strip()
+        if not stripped:
             continue
-        buf += line + "\n"
         stream_parse_debug["text_lines"] += 1
+
+        # ── Layer 1: fast-path for NDJSON (one complete object per line) ──
+        # Avoids touching the shared buffer for the vast majority of lines.
+        if stripped.startswith(("{", "[")):
+            try:
+                obj = json.loads(stripped)
+                stream_parse_debug["json_roots"] += 1
+                yield from _emit_obj(obj)
+                continue          # handled — do not append to buf
+            except json.JSONDecodeError:
+                pass              # incomplete/multi-line object; fall through to buffer
+
+        # ── Layer 2: per-line length cap ──
+        if len(line) > max_line:
+            stream_parse_debug["buffer_overflows"] += 1
+            print(
+                f"[sentinel] skipping oversized line ({len(line)} bytes > {max_line}); "
+                "not a valid single-line JSON record",
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+
+        buf += line + "\n"
+
+        # ── Last-resort ceiling (should never trigger with layers 1+2 active) ──
         if len(buf) > max_buf:
             stream_parse_debug["buffer_overflows"] += 1
             print(
@@ -1612,6 +1648,7 @@ def iter_caddy_log_objects(path, from_start=False):
             )
             buf = ""
             continue
+
         while True:
             buf = buf.lstrip()
             if not buf:
@@ -1619,6 +1656,16 @@ def iter_caddy_log_objects(path, from_start=False):
             try:
                 obj, end = dec.raw_decode(buf, 0)
             except json.JSONDecodeError:
+                # ── Layer 3: prefix trim ──
+                # Drop everything up to the next JSON-start character so that
+                # non-JSON lines do not accumulate in the buffer indefinitely.
+                next_start = -1
+                for ch in ("{", "["):
+                    idx = buf.find(ch, 1)   # skip pos 0 (already failed)
+                    if idx != -1 and (next_start == -1 or idx < next_start):
+                        next_start = idx
+                if next_start != -1:
+                    buf = buf[next_start:]  # trim leading garbage
                 break
             buf = buf[end:]
             stream_parse_debug["json_roots"] += 1

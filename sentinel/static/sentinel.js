@@ -946,12 +946,13 @@ function renderTlsFp(el,rows){
   var h='';
   rows.forEach(function(r){
     var fp=r[0]||'', cnt=r[1]||0;
-    var isCf=fp.length<=32&&!/^tls:/.test(fp);
+    var isCf=!/^tls:/.test(fp);
     var label=isCf?'JA3':'TLS';
     var tagCls=isCf?'tag-bot':'tag-scan';
-    h+='<div class="list-row">';
-    h+='<span class="list-key" style="font-family:var(--mono);font-size:10px" title="'+fp+'"><span class="tag '+tagCls+'">'+label+'</span> '+fmtFp(fp)+'</span>';
-    h+='<span class="list-val" style="color:var(--accent3)">'+cnt+' IPs</span>';
+    h+='<div class="list-row" style="gap:6px">';
+    h+='<span class="list-key" style="font-family:var(--mono);font-size:10px;flex:1;min-width:0" title="'+escapeAttr(fp)+'"><span class="tag '+tagCls+'">'+label+'</span> '+escapeHtml(fmtFp(fp))+'</span>';
+    h+='<span class="list-val" style="color:var(--accent3);flex-shrink:0">'+cnt+' IPs</span>';
+    h+='<button class="toolbtn danger tls-fp-del-btn" data-fp="'+escapeAttr(fp)+'" style="font-size:9px;padding:2px 8px;flex-shrink:0" title="Delete this fingerprint cluster">&#10005;</button>';
     h+='</div>';
   });
   el.innerHTML=h;
@@ -1335,6 +1336,21 @@ document.addEventListener('click',async function(e){
       await load(true);
       await loadAudit(true);
     }catch(err){alert('Mute failed');}
+    return;
+  }
+
+  /* Delete TLS fingerprint cluster */
+  var delBtn=e.target.closest('.tls-fp-del-btn');
+  if(delBtn&&delBtn.dataset.fp){
+    var fp=delBtn.dataset.fp;
+    if(!confirm('Delete fingerprint cluster?\n\n'+fp+'\n\nThis removes the shared_tls_fp tag from all associated IPs.')) return;
+    delBtn.disabled=true;
+    try{
+      var r=await fetch('/api/tls_fp/delete',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({fp:fp})});
+      var j=await r.json().catch(function(){return{};});
+      if(!r.ok){alert(j.error||'Delete failed');delBtn.disabled=false;return;}
+      await load(true);
+    }catch(err){alert('Delete failed');delBtn.disabled=false;}
     return;
   }
 });

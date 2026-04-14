@@ -185,6 +185,41 @@ def api_storage():
     return jsonify(get_storage_stats())
 
 
+@bp.route("/api/tls_fp/delete", methods=["POST"])
+def api_tls_fp_delete():
+    from sentinel.auth import _audit_actor, _audit_write
+    body = request.get_json(silent=True) or {}
+    fp = (body.get("fp") or "").strip()
+    if not fp:
+        return jsonify({"error": "missing fp"}), 400
+
+    with state.lock:
+        affected_ips = set(state.tls_fp_to_ips.pop(fp, set()))
+        # Remove the cached per-IP pointer for IPs whose only FP was this one.
+        for ip in affected_ips:
+            if state.ip_tls_fp.get(ip) == fp:
+                del state.ip_tls_fp[ip]
+        # Remove shared_tls_fp tag from affected IPs, but only if they no
+        # longer belong to any other shared FP cluster (>= threshold).
+        threshold = config.TLS_FP_SHARED_THRESHOLD
+        for ip in affected_ips:
+            still_shared = any(
+                ip in ips and len(ips) >= threshold
+                for other_fp, ips in state.tls_fp_to_ips.items()
+            )
+            if not still_shared:
+                state.ip_tags[ip].discard("shared_tls_fp")
+
+        remaining = sorted(
+            [(f, len(ips)) for f, ips in state.tls_fp_to_ips.items()
+             if len(ips) >= threshold],
+            key=lambda x: -x[1],
+        )[:20]
+
+    _audit_write("tls_fp_delete", _audit_actor(), {"fp": fp, "affected_ips": len(affected_ips)})
+    return jsonify({"ok": True, "deleted_fp": fp, "affected_ips": len(affected_ips), "tls_fp_shared": remaining})
+
+
 @bp.route("/api/settings", methods=["GET"])
 def api_settings_get():
     from sentinel import settings

@@ -2,6 +2,8 @@
 
 Sentinel is a small **SOC-style live dashboard** for a **Caddy JSON access log** on the same machine. It tails the log file locally (no SSH), aggregates traffic, enriches IPs with ASN/country, scores noisy patterns, and serves a web UI plus JSON for scripting.
 
+![Sentinel dashboard](dashboard.png)
+
 ## Features
 
 - **Live tail** of a JSON access log with rotation-safe binary reads

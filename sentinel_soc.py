@@ -348,10 +348,14 @@ def _fetch_geo(ip):
         return geo_cache[ip]
     try:
         r = requests.get(
-            f"http://ip-api.com/json/{ip}?fields=countryCode,as,isp",
+            f"http://ip-api.com/json/{ip}?fields=status,message,countryCode,as,isp",
             timeout=2,
+            allow_redirects=False,
         )
+        r.raise_for_status()
         d = r.json()
+        if d.get("status") != "success":
+            raise ValueError(d.get("message", "ip-api lookup failed"))
         geo_cache[ip] = {
             "country": d.get("countryCode", "??"),
             "asn": f"{d.get('as', '?')} | {d.get('isp', '?')}",
@@ -1258,8 +1262,17 @@ def index():
   --sans: system-ui, Segoe UI, Roboto, sans-serif;
   --focus:#7c3aed;
 }
+/* Live dot */
+@keyframes livepulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.3;transform:scale(.55)} }
+.live-dot {
+  width:8px; height:8px; border-radius:50%; background:var(--ok); flex-shrink:0;
+  animation:livepulse 1.8s ease-in-out infinite;
+}
+.live-dot.stale { background:var(--warn); animation-duration:3.2s; }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; }
+
+/* Header */
 header {
   display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
   padding:12px 20px; border-bottom:1px solid var(--border);
@@ -1272,35 +1285,75 @@ header .sub { color:var(--muted); font-size:12px; margin-top:2px; }
   font-weight:700; font-size:11px; letter-spacing:.08em;
   border:1px solid var(--border); font-family:var(--mono);
 }
+
+/* DEFCON posture */
+.posture-area { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.defcon-wrap { display:flex; flex-direction:column; align-items:center; gap:4px; }
+.defcon-label { font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-family:var(--mono); }
+.defcon-blocks { display:flex; gap:3px; }
+.defcon-block {
+  width:16px; height:28px; border-radius:3px;
+  background:#141d2e; border:1px solid #2d3748;
+  transition:background .4s, box-shadow .4s, border-color .4s;
+}
+.defcon-block.lit { border-color:transparent; }
+@keyframes defpulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+.defcon-block.blk-pulse { animation:defpulse 1s ease-in-out infinite; }
+
+/* Toolbar */
 .toolbar {
   display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 20px;
   background:#080c14; border-bottom:1px solid var(--border);
 }
 .toolbar input[type="search"] {
-  flex:1; min-width:180px; max-width:420px; padding:8px 10px; border-radius:6px;
+  flex:1; min-width:180px; max-width:380px; padding:8px 10px; border-radius:6px;
   border:1px solid var(--border); background:#0d1320; color:var(--text); font-family:var(--mono); font-size:12px;
 }
+.toolbar-sep { width:1px; height:20px; background:var(--border); flex-shrink:0; }
 .toolbtn {
   padding:6px 12px; border-radius:6px; border:1px solid var(--border); background:#111827;
-  color:var(--text); font-size:11px; font-family:var(--mono); cursor:pointer;
+  color:var(--text); font-size:11px; font-family:var(--mono); cursor:pointer; white-space:nowrap;
 }
 .toolbtn:hover { border-color:var(--accent); color:var(--accent); }
 .toolbtn.on { border-color:var(--accent); background:#0c1929; color:var(--accent); }
 .toolbtn.danger:hover { border-color:var(--danger); color:var(--danger); }
+
+/* KPI row */
 .kpi-row {
-  display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:10px;
+  display:grid; grid-template-columns: repeat(auto-fit, minmax(135px,1fr)); gap:10px;
   padding:14px 20px;
 }
 .kpi {
   background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+  border-left:3px solid var(--border); transition:border-left-color .5s;
 }
+.kpi.ok     { border-left-color:var(--ok); }
+.kpi.warn   { border-left-color:var(--warn); }
+.kpi.danger { border-left-color:var(--danger); }
+.kpi-hd { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; }
 .kpi .label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.1em; }
-.kpi .val { font-family:var(--mono); font-size:1.35rem; margin-top:4px; }
+.kpi .val { font-family:var(--mono); font-size:1.35rem; }
+.delta { font-size:9px; font-family:var(--mono); padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0; }
+.delta.up   { background:#2d0a0a; color:#f87171; }
+.delta.down { background:#0a2318; color:#4ade80; }
+.delta.nc   { color:var(--muted); }
+
+/* Layout */
 .layout {
-  display:grid; grid-template-columns: 1fr 400px; gap:14px; padding:0 20px 20px;
-  max-width:1680px; margin:0 auto;
+  display:grid; grid-template-columns: 1fr clamp(300px,26vw,440px); gap:14px;
+  padding:0 20px 20px; max-width:1680px; margin:0 auto;
+  transition:grid-template-columns .25s ease;
 }
-@media (max-width:1100px) { .layout { grid-template-columns:1fr; } }
+.layout.sb-hidden { grid-template-columns: 1fr 30px; }
+@media (max-width:1100px) { .layout, .layout.sb-hidden { grid-template-columns:1fr !important; } }
+.sidebar { min-width:0; overflow:hidden; }
+.layout.sb-hidden .sidebar .card { display:none; }
+
+/* Sidebar toggle */
+.sb-toggle-row { display:flex; justify-content:flex-end; margin-bottom:6px; }
+.sb-toggle { padding:4px 8px; font-size:12px; }
+
+/* Cards */
 .card {
   background:var(--panel); border:1px solid var(--border); border-radius:10px; margin-bottom:14px;
   overflow:hidden;
@@ -1311,6 +1364,8 @@ header .sub { color:var(--muted); font-size:12px; margin-top:2px; }
 }
 .card .hint { font-weight:400; text-transform:none; letter-spacing:0; color:#475569; margin-left:8px; }
 .card .body { padding:8px 10px; max-height:280px; overflow:auto; }
+
+/* List rows */
 .row {
   display:flex; justify-content:space-between; gap:10px; padding:6px 4px;
   border-bottom:1px solid #111827; font-family:var(--mono); font-size:12px;
@@ -1319,68 +1374,98 @@ header .sub { color:var(--muted); font-size:12px; margin-top:2px; }
 .row:last-child { border-bottom:none; }
 .row .k { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; color:#cbd5e1; }
 .row.row-ip .k { white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:4px; min-width:0; }
-.tag {
-  font-size:9px; text-transform:uppercase; letter-spacing:.06em; padding:2px 5px; border-radius:3px;
-  font-weight:600; flex-shrink:0; font-family:var(--sans);
-}
-.tag-bot { background:#0c2744; color:#7dd3fc; border:1px solid #1e4976; }
-.tag-crawler { background:#2a1f3d; color:#d8b4fe; border:1px solid #4c1d95; }
 .row .v { color:var(--accent); flex-shrink:0; }
 .row.danger .k { color:var(--danger); }
 .row.row-ip { cursor:pointer; }
 .row.row-ip:hover { background:#111827; }
 .row.row-ip:active { background:#1e293b; }
 .row.hl-focus { box-shadow:inset 0 0 0 1px var(--focus); background:#13081f; }
-.charts { display:grid; grid-template-columns:1fr 1fr 220px; gap:10px; }
-@media (max-width:900px) { .charts { grid-template-columns:1fr; } }
+
+/* Tags */
+.tag {
+  font-size:9px; text-transform:uppercase; letter-spacing:.06em; padding:2px 5px; border-radius:3px;
+  font-weight:600; flex-shrink:0; font-family:var(--sans);
+}
+.tag-bot { background:#0c2744; color:#7dd3fc; border:1px solid #1e4976; }
+.tag-crawler { background:#2a1f3d; color:#d8b4fe; border:1px solid #4c1d95; }
+
+/* Charts */
+.charts-dual { display:grid; grid-template-columns:1fr 180px; gap:10px; }
+@media (max-width:900px) { .charts-dual { grid-template-columns:1fr; } }
 .chart-wrap { padding:10px; height:200px; position:relative; }
-.chart-wrap.sm { height:200px; }
+
+/* Alert feed */
 .alert-row {
-  border-left:3px solid var(--danger); padding:8px 10px; margin-bottom:8px;
+  border-left:3px solid var(--danger); padding:8px 10px; margin-bottom:6px;
   background:#0c0f18; border-radius:4px; font-size:11px; font-family:var(--mono);
-  cursor:pointer;
+  cursor:pointer; transition:background .15s;
 }
 .alert-row:hover { background:#121722; }
+.alert-row.sev-med { border-left-width:5px; border-left-color:#f97316; }
+.alert-row.sev-hi  { border-left-width:7px; border-left-color:#dc2626; }
 .alert-row.hl-focus { border-left-color:var(--focus); box-shadow:inset 3px 0 0 var(--focus); }
-.alert-row .meta { color:var(--muted); margin-bottom:4px; }
+.alert-hd { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-bottom:4px; }
+.alert-time { color:var(--muted); font-size:10px; margin-left:auto; flex-shrink:0; }
+.score-pill {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:26px; height:16px; border-radius:8px;
+  font-size:9px; font-family:var(--mono); font-weight:700; padding:0 5px; flex-shrink:0;
+}
+.score-pill.lo  { background:#0c2744; color:#7dd3fc; border:1px solid #1e4976; }
+.score-pill.med { background:#312008; color:#fbbf24; border:1px solid #78350f; }
+.score-pill.hi  { background:#2d0a0a; color:#f87171; border:1px solid #7f1d1d; }
 .alert-row .uri { color:#f87171; word-break:break-all; }
-.th-grid { display:grid; grid-template-columns: 1fr 48px 56px 40px; gap:6px;
+.alert-row .ua  { color:#475569; font-size:9px; margin-top:3px; }
+
+/* Threat board */
+.th-grid { display:grid; grid-template-columns: 1fr 68px 52px 32px; gap:6px;
   padding:6px 8px; font-size:11px; font-family:var(--mono); color:var(--muted);
   border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:.06em;
 }
 .th-row {
-  display:grid; grid-template-columns: 1fr 48px 56px 40px; gap:6px;
+  display:grid; grid-template-columns: 1fr 68px 52px 32px; gap:6px;
   padding:6px 8px; font-family:var(--mono); font-size:11px; border-bottom:1px solid #111827;
-  align-items:start; cursor:pointer; border-radius:4px; margin:0 2px;
+  align-items:center; cursor:pointer; border-radius:4px; margin:0 2px;
+  transition:background .15s;
 }
 .th-row:hover { background:#111827; }
 .th-row.hl-focus { box-shadow:inset 0 0 0 1px var(--focus); }
 .th-row .ip { color:var(--accent); overflow:hidden; min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
-.th-row .sc { color:var(--warn); text-align:right; }
 .th-row .hits { text-align:right; color:#94a3b8; }
 .th-row .cc { text-align:center; }
+.sc-wrap { display:flex; align-items:center; justify-content:flex-end; position:relative; height:18px; }
+.sc-bar { position:absolute; right:0; top:2px; bottom:2px; border-radius:2px; opacity:.28; transition:width .5s; }
+.sc-num { position:relative; z-index:1; color:var(--warn); text-align:right; width:100%; }
+
+/* Modal */
 .modal-backdrop {
   display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:100;
   align-items:flex-start; justify-content:center; padding:24px; overflow:auto;
 }
 .modal-backdrop.open { display:flex; }
 .modal {
-  width:100%; max-width:640px; background:var(--panel); border:1px solid var(--border);
+  width:100%; max-width:660px; background:var(--panel); border:1px solid var(--border);
   border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.5); margin:auto;
 }
 .modal-hd {
   display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:12px 16px; border-bottom:1px solid var(--border);
 }
-.modal-hd h3 { margin:0; font-size:14px; font-family:var(--mono); }
+.modal-hd h3 { margin:0; font-size:14px; font-family:var(--mono); display:flex; align-items:center; gap:8px; }
 .modal-bd { padding:12px 16px 16px; max-height:70vh; overflow:auto; }
-.modal-meta { font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:12px; line-height:1.5; }
+.modal-geo {
+  display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; margin-bottom:12px;
+  background:#080c14; border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+}
+.geo-lbl { font-size:9px; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin-bottom:1px; }
+.geo-val { font-family:var(--mono); font-size:12px; }
+.modal-score-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
 .path-table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:11px; }
 .path-table th, .path-table td { text-align:left; padding:6px 8px; border-bottom:1px solid #1e293b; }
 .path-table th { color:var(--muted); font-weight:600; }
 .path-table td:last-child { text-align:right; color:var(--accent); }
-footer { padding:8px 20px; color:var(--muted); font-size:11px; border-top:1px solid var(--border); }
-kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid var(--border); border-radius:4px; background:#111827; }
+
+/* Muted IPs */
 .ban-inp {
   flex:1; min-width:0; padding:8px 10px; border-radius:6px; border:1px solid var(--border);
   background:#0d1320; color:var(--text); font-family:var(--mono); font-size:12px;
@@ -1389,54 +1474,96 @@ kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid
 .ban-row .kip { flex:1; overflow:hidden; text-overflow:ellipsis; color:#cbd5e1; }
 .ban-row .cnt { color:var(--warn); flex-shrink:0; }
 .ban-actions { display:flex; gap:6px; margin-bottom:10px; align-items:stretch; }
+
+footer { padding:8px 20px; color:var(--muted); font-size:11px; border-top:1px solid var(--border); }
+kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid var(--border); border-radius:4px; background:#111827; }
 </style>
 </head>
 <body>
+
 <header>
-  <div>
-    <h1>SENTINEL</h1>
-    <div class="sub">Live Caddy access telemetry | correlation view</div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div id="liveDot" class="live-dot"></div>
+    <div>
+      <h1>SENTINEL</h1>
+      <div class="sub">Live Caddy access telemetry &mdash; <span id="updatedAgo" style="color:var(--muted);font-size:11px">connecting...</span></div>
+    </div>
   </div>
-  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+  <div class="posture-area">
     <span class="badge" id="freezeBadge" style="display:none">FROZEN</span>
     <span class="badge" id="authBadge" style="display:none" title="HTTP Basic Auth enabled">AUTH</span>
-    <span class="badge" id="lvl">POSTURE: -</span>
+    <div class="defcon-wrap">
+      <div class="defcon-blocks">
+        <div class="defcon-block" id="db0"></div>
+        <div class="defcon-block" id="db1"></div>
+        <div class="defcon-block" id="db2"></div>
+        <div class="defcon-block" id="db3"></div>
+        <div class="defcon-block" id="db4"></div>
+      </div>
+      <div class="defcon-label" id="defconLabel">POSTURE: -</div>
+    </div>
   </div>
 </header>
 
 <div class="toolbar">
   <input type="search" id="q" placeholder="Filter lists (paths, ASN, IP...)" autocomplete="off"/>
+  <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn" id="btnPause" title="Pause polling">Pause</button>
   <span style="color:var(--muted);font-size:11px;">Poll:</span>
   <button type="button" class="toolbtn poll-opt" data-ms="1000">1s</button>
   <button type="button" class="toolbtn poll-opt on" data-ms="1500">1.5s</button>
   <button type="button" class="toolbtn poll-opt" data-ms="3000">3s</button>
   <button type="button" class="toolbtn poll-opt" data-ms="5000">5s</button>
+  <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn" id="btnExport" title="Download last /data JSON">Export JSON</button>
+  <div class="toolbar-sep"></div>
   <button type="button" class="toolbtn danger" id="btnClearFocus" title="Clear IP focus">Clear focus</button>
-  <button type="button" class="toolbtn danger" id="btnReset" title="Clear all metrics (tail keeps running)">Reset dashboard</button>
-  <span style="color:var(--muted);font-size:11px;font-family:var(--mono);"><kbd>/</kbd> search <kbd>Esc</kbd> close</span>
+  <button type="button" class="toolbtn danger" id="btnReset" title="Clear all metrics (tail keeps running)">Reset</button>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono);margin-left:4px"><kbd>/</kbd> search <kbd>Esc</kbd> close</span>
 </div>
 
 <div class="kpi-row">
-  <div class="kpi"><div class="label">Requests / sec</div><div class="val" id="rps">0</div></div>
-  <div class="kpi"><div class="label">Peak RPS</div><div class="val" id="peak">0</div></div>
-  <div class="kpi"><div class="label">Total events</div><div class="val" id="total">0</div></div>
-  <div class="kpi"><div class="label">Unique IPs</div><div class="val" id="uniq">0</div></div>
-  <div class="kpi"><div class="label">4xx / 5xx</div><div class="val" id="errs">0 / 0</div></div>
-  <div class="kpi"><div class="label">Error rate</div><div class="val" id="errpct">0%</div></div>
-  <div class="kpi"><div class="label">Susp. hits / s</div><div class="val" id="atk">0</div></div>
-  <div class="kpi"><div class="label">Muted hits (excl.)</div><div class="val" id="mutedTotal">0</div></div>
+  <div class="kpi" id="kpi-rps">
+    <div class="kpi-hd"><div class="label">Requests / sec</div><div class="delta nc" id="delta-rps"></div></div>
+    <div class="val" id="rps">0</div>
+  </div>
+  <div class="kpi" id="kpi-peak">
+    <div class="kpi-hd"><div class="label">Peak RPS</div><div class="delta nc" id="delta-peak"></div></div>
+    <div class="val" id="peak">0</div>
+  </div>
+  <div class="kpi ok" id="kpi-total">
+    <div class="kpi-hd"><div class="label">Total events</div></div>
+    <div class="val" id="total">0</div>
+  </div>
+  <div class="kpi" id="kpi-uniq">
+    <div class="kpi-hd"><div class="label">Unique IPs</div><div class="delta nc" id="delta-uniq"></div></div>
+    <div class="val" id="uniq">0</div>
+  </div>
+  <div class="kpi" id="kpi-errs">
+    <div class="kpi-hd"><div class="label">4xx / 5xx</div></div>
+    <div class="val" id="errs">0 / 0</div>
+  </div>
+  <div class="kpi" id="kpi-errpct">
+    <div class="kpi-hd"><div class="label">Error rate</div><div class="delta nc" id="delta-errpct"></div></div>
+    <div class="val" id="errpct">0%</div>
+  </div>
+  <div class="kpi" id="kpi-atk">
+    <div class="kpi-hd"><div class="label">Susp. hits / s</div><div class="delta nc" id="delta-atk"></div></div>
+    <div class="val" id="atk">0</div>
+  </div>
+  <div class="kpi ok" id="kpi-muted">
+    <div class="kpi-hd"><div class="label">Muted hits (excl.)</div></div>
+    <div class="val" id="mutedTotal">0</div>
+  </div>
 </div>
 
-<div class="layout">
+<div class="layout" id="layout">
   <div>
     <div class="card">
       <h2>Throughput &amp; suspicious activity <span class="hint">click IP anywhere for drill-down</span></h2>
-      <div class="charts">
-        <div class="chart-wrap"><canvas id="rpsChart"></canvas></div>
-        <div class="chart-wrap"><canvas id="atkChart"></canvas></div>
-        <div class="chart-wrap sm"><canvas id="statusDonut"></canvas></div>
+      <div class="charts-dual">
+        <div class="chart-wrap"><canvas id="comboChart"></canvas></div>
+        <div class="chart-wrap"><canvas id="statusDonut"></canvas></div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
@@ -1448,7 +1575,10 @@ kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid
       <div class="card"><h2>Country (enriched)</h2><div class="body" id="countries"></div></div>
     </div>
   </div>
-  <div>
+  <div class="sidebar" id="sidebar">
+    <div class="sb-toggle-row">
+      <button type="button" class="toolbtn sb-toggle" id="sbToggle" title="Collapse sidebar">&#9664;</button>
+    </div>
     <div class="card">
       <h2>Alert feed (score &gt;= threshold) <span class="hint">click row = focus + drill-down</span></h2>
       <div class="body" style="max-height:360px" id="alerts"></div>
@@ -1456,7 +1586,10 @@ kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid
     <div class="card">
       <h2>Top scored sources (threat board)</h2>
       <div class="body" style="max-height:none;padding:0">
-        <div class="th-grid"><span>Source</span><span class="sc">Score</span><span class="hits">Hits</span><span class="cc">CC</span></div>
+        <div class="th-grid">
+          <span>Source</span><span style="text-align:right">Score</span>
+          <span style="text-align:right">Hits</span><span style="text-align:center">CC</span>
+        </div>
         <div id="threats"></div>
       </div>
     </div>
@@ -1479,17 +1612,19 @@ kbd { font-family:var(--mono); font-size:10px; padding:2px 5px; border:1px solid
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-labelledby="modalTitle">
     <div class="modal-hd">
-      <h3 id="modalTitle">Host detail</h3>
-      <div>
+      <h3 id="modalTitle"><span id="modalFlag" style="font-size:18px"></span><span id="modalIpText">-</span></h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
+        <button type="button" class="toolbtn" id="modalExtLink">ip-api &#8599;</button>
         <button type="button" class="toolbtn danger" id="modalBan">Mute IP</button>
         <button type="button" class="toolbtn" id="modalClose">Close</button>
       </div>
     </div>
     <div class="modal-bd">
-      <div class="modal-meta" id="modalMeta"></div>
+      <div class="modal-geo" id="modalGeo" style="display:none"></div>
+      <div class="modal-score-row" id="modalScoreRow"></div>
       <table class="path-table">
-        <thead><tr><th>Path</th><th>Hits</th></tr></thead>
+        <thead><tr><th>Path</th><th style="text-align:right">Hits</th></tr></thead>
         <tbody id="modalPaths"></tbody>
       </table>
     </div>
@@ -1504,168 +1639,322 @@ let focusIp='';
 let pollMs=1500;
 let pollTimer=null;
 let paused=false;
+let lastLoadMs=0;
+let prevKpi={rps:0,peak:0,uniq:0,errpct:0,atk:0};
+let knownAlertCount=0;
+let newAlertsSinceBlur=0;
+let isPageVisible=true;
+let sidebarOpen=true;
+let modalIp='';
 
-const chartOpts={
-  responsive:true, maintainAspectRatio:false,
-  plugins:{ legend:{display:false} },
-  scales:{
-    x:{ display:false, grid:{display:false} },
-    y:{ beginAtZero:true, grid:{ color:'#1e293b' }, ticks:{ color:'#64748b', font:{size:10} } }
+/* Tab visibility for alert count */
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    isPageVisible=true;
+    newAlertsSinceBlur=0;
+    document.title='Sentinel | SOC';
+  }else{
+    isPageVisible=false;
   }
-};
-
-const rpsChart=new Chart(document.getElementById('rpsChart'),{
-  type:'line',
-  data:{ labels:[], datasets:[{ label:'RPS', data:[], borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,0.08)', fill:true, tension:0.35, pointRadius:0 }] },
-  options:{...chartOpts, plugins:{...chartOpts.plugins, tooltip:{enabled:true, mode:'index', intersect:false}}}
-});
-const atkChart=new Chart(document.getElementById('atkChart'),{
-  type:'line',
-  data:{ labels:[], datasets:[{ label:'Susp / s', data:[], borderColor:'#f87171', backgroundColor:'rgba(248,113,113,0.08)', fill:true, tension:0.35, pointRadius:0 }] },
-  options:{...chartOpts, plugins:{...chartOpts.plugins, tooltip:{enabled:true, mode:'index', intersect:false}}}
 });
 
-const donutOpts={
-  responsive:true, maintainAspectRatio:false,
-  plugins:{
-    legend:{ position:'bottom', labels:{ color:'#94a3b8', boxWidth:10, font:{size:9} } },
-    tooltip:{callbacks:{label(c){ const sum=c.dataset.data.reduce((a,b)=>a+b,0)||1; const pct=((c.raw/sum)*100).toFixed(1); return c.label+': '+c.raw+' ('+pct+'%)'; }}}
+/* Live indicator ticker */
+setInterval(function(){
+  if(!lastLoadMs) return;
+  const s=Math.floor((Date.now()-lastLoadMs)/1000);
+  const el=document.getElementById('updatedAgo');
+  const dot=document.getElementById('liveDot');
+  if(s<=2){
+    el.textContent='live'; el.style.color='var(--ok)';
+    dot.className='live-dot';
+  } else if(s<=8){
+    el.textContent=s+'s ago'; el.style.color='var(--ok)';
+    dot.className='live-dot';
+  } else {
+    el.textContent=s+'s ago'; el.style.color='var(--warn)';
+    dot.className='live-dot stale';
   }
-};
+},1000);
+
+/* Combined RPS + Suspicious chart */
+const comboChart=new Chart(document.getElementById('comboChart'),{
+  type:'line',
+  data:{
+    labels:[],
+    datasets:[
+      { label:'RPS', data:[], borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,0.07)',
+        fill:true, tension:0.35, pointRadius:0, yAxisID:'y' },
+      { label:'Susp/s', data:[], borderColor:'#f87171', backgroundColor:'rgba(248,113,113,0.06)',
+        fill:true, tension:0.35, pointRadius:0, yAxisID:'y2' }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    interaction:{ mode:'index', intersect:false },
+    plugins:{
+      legend:{ display:true, position:'top', align:'end',
+        labels:{ color:'#94a3b8', boxWidth:10, font:{size:9}, padding:8 } },
+      tooltip:{ enabled:true }
+    },
+    scales:{
+      x:{ display:false, grid:{display:false} },
+      y:{ beginAtZero:true, grid:{color:'#1a2233'},
+          ticks:{color:'#64748b',font:{size:9}},
+          title:{display:true,text:'RPS',color:'#64748b',font:{size:9}} },
+      y2:{ beginAtZero:true, position:'right', grid:{display:false},
+           ticks:{color:'#f87171',font:{size:9}},
+           title:{display:true,text:'Susp/s',color:'#f87171',font:{size:9}} }
+    }
+  }
+});
+
 const statusDonut=new Chart(document.getElementById('statusDonut'),{
   type:'doughnut',
   data:{
     labels:['2xx','3xx','4xx','5xx','other'],
-    datasets:[{ data:[0,0,0,0,0], backgroundColor:['#22c55e','#38bdf8','#f59e0b','#ef4444','#64748b'], borderWidth:0 }]
+    datasets:[{ data:[0,0,0,0,0],
+      backgroundColor:['#22c55e','#38bdf8','#f59e0b','#ef4444','#64748b'],
+      borderWidth:0 }]
   },
-  options:donutOpts
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{ position:'bottom', labels:{ color:'#94a3b8', boxWidth:10, font:{size:9} } },
+      tooltip:{callbacks:{label:function(c){
+        const sum=c.dataset.data.reduce(function(a,b){return a+b;},0)||1;
+        const pct=((c.raw/sum)*100).toFixed(1);
+        return c.label+': '+c.raw+' ('+pct+'%)';
+      }}}
+    }
+  }
 });
 
+/* Helpers */
 function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function escapeAttr(s){ return escapeHtml(s).replace(/'/g,'&#39;'); }
 
+function timeAgo(ts){
+  if(!ts) return '';
+  const d=Date.now()-new Date(ts).getTime();
+  if(d<5000) return 'just now';
+  if(d<60000) return Math.floor(d/1000)+'s ago';
+  if(d<3600000) return Math.floor(d/60000)+'m ago';
+  return Math.floor(d/3600000)+'h ago';
+}
+
+function ccFlag(cc){
+  if(!cc||cc.length!==2) return '';
+  try{
+    return cc.toUpperCase().split('').map(function(c){
+      return String.fromCodePoint(0x1F1E6+c.charCodeAt(0)-65);
+    }).join('');
+  }catch(e){ return ''; }
+}
+
+function scorePillCls(n){ if(n>=10) return 'hi'; if(n>=5) return 'med'; return 'lo'; }
+
 function filterPairs(pairs,q){
-  let a=pairs||[];
-  if(q&&q.trim()){ const t=q.toLowerCase(); a=a.filter(([k])=>String(k).toLowerCase().includes(t)); }
+  var a=pairs||[];
+  if(q&&q.trim()){ var t=q.toLowerCase(); a=a.filter(function(p){ return String(p[0]).toLowerCase().includes(t); }); }
   return a;
 }
 
 function row(k,v,danger,ipClick,tags){
-  const d=danger?' danger':'';
-  const ip=(ipClick&&k)?' row-ip':'';
-  const hl=(focusIp&&String(k)===focusIp)?' hl-focus':'';
-  const dataIp=ipClick?` data-ip="${escapeAttr(k)}"`:'';
-  const pills=(ipClick&&tags&&tags.length)
-    ? ' '+tags.map(t=>`<span class="tag tag-${escapeAttr(t)}">${escapeHtml(t)}</span>`).join('')
+  var d=danger?' danger':'';
+  var ip=(ipClick&&k)?' row-ip':'';
+  var hl=(focusIp&&String(k)===focusIp)?' hl-focus':'';
+  var dataIp=ipClick?' data-ip="'+escapeAttr(k)+'"':'';
+  var pills=(ipClick&&tags&&tags.length)
+    ? ' '+tags.map(function(t){ return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>'; }).join('')
     : '';
-  return `<div class="row${d}${ip}${hl}"${dataIp}><span class="k" title="${escapeAttr(k)}">${escapeHtml(k)}${pills}</span><span class="v">${v}</span></div>`;
+  return '<div class="row'+d+ip+hl+'"'+dataIp+'><span class="k" title="'+escapeAttr(k)+'">'+escapeHtml(k)+pills+'</span><span class="v">'+v+'</span></div>';
 }
 
+/* DEFCON posture */
+var DEFCON={
+  'NORMAL':  {blocks:1, color:'#22c55e'},
+  'ELEVATED':{blocks:2, color:'#ca8a04'},
+  'HIGH':    {blocks:3, color:'#ea580c'},
+  'CRITICAL':{blocks:5, color:'#dc2626'}
+};
+function updateDefcon(level, color){
+  var def=DEFCON[level]||DEFCON['NORMAL'];
+  var cnt=def.blocks;
+  var col=color||def.color;
+  var isCrit=(level==='CRITICAL');
+  for(var i=0;i<5;i++){
+    var b=document.getElementById('db'+i);
+    if(!b) continue;
+    if(i<cnt){
+      b.className='defcon-block lit'+(isCrit?' blk-pulse':'');
+      b.style.background=col;
+      b.style.boxShadow='0 0 7px '+col;
+    } else {
+      b.className='defcon-block';
+      b.style.background='';
+      b.style.boxShadow='';
+    }
+  }
+  var lbl=document.getElementById('defconLabel');
+  if(lbl){ lbl.textContent='POSTURE: '+(level||'-'); lbl.style.color=col; }
+}
+
+/* KPI helpers */
+function kpiLevel(id,val,warnT,dangerT){
+  var el=document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('ok','warn','danger');
+  if(dangerT!=null&&val>=dangerT) el.classList.add('danger');
+  else if(warnT!=null&&val>=warnT) el.classList.add('warn');
+  else el.classList.add('ok');
+}
+function kpiDelta(id,cur,prev){
+  var el=document.getElementById(id);
+  if(!el) return;
+  if(prev==null){ el.textContent=''; el.className='delta nc'; return; }
+  var diff=cur-prev;
+  if(diff===0||prev===0){ el.textContent='\u2014'; el.className='delta nc'; return; }
+  var pct=Math.abs(Math.round((diff/Math.max(prev,1))*100));
+  el.textContent=(diff>0?'\u2191':'\u2193')+pct+'%';
+  el.className='delta '+(diff>0?'up':'down');
+}
+
+/* Render lists */
 function renderIpList(el,pairs,tagMap){
-  const q=document.getElementById('q').value;
-  const pairsFiltered=filterPairs(pairs,q);
-  let html='';
-  pairsFiltered.forEach(([k,v])=>{
-    const tags=(tagMap&&tagMap[k])||[];
-    html+=row(k,v,false,true,tags);
-  });
+  var q=document.getElementById('q').value;
+  var pf=filterPairs(pairs,q);
+  var html='';
+  pf.forEach(function(p){ var tags=(tagMap&&tagMap[p[0]])||[]; html+=row(p[0],p[1],false,true,tags); });
   el.innerHTML=html||'<div class="row"><span class="k">No matches</span></div>';
 }
-
 function renderList(el,data,flag,ipCol){
-  const q=document.getElementById('q').value;
-  const pairs=filterPairs(data,q);
-  let html='';
-  pairs.forEach(([k,v])=>{ html+=row(k,v,flag&&v>100,ipCol); });
+  var q=document.getElementById('q').value;
+  var pairs=filterPairs(data,q);
+  var html='';
+  pairs.forEach(function(p){ html+=row(p[0],p[1],flag&&p[1]>100,ipCol); });
   el.innerHTML=html||'<div class="row"><span class="k">No matches</span></div>';
 }
-
 function renderStatus(el,obj){
-  const q=document.getElementById('q').value;
-  let keys=Object.keys(obj||{}).sort((a,b)=>obj[b]-obj[a]);
-  if(q&&q.trim()){ const t=q.toLowerCase(); keys=keys.filter(k=>String(k).toLowerCase().includes(t)); }
-  let html='';
-  keys.slice(0,20).forEach(k=>{
-    const n=obj[k];
-    const danger=parseInt(k,10)>=400;
-    html+=row(k+'',n,danger,false);
+  var q=document.getElementById('q').value;
+  var keys=Object.keys(obj||{}).sort(function(a,b){ return obj[b]-obj[a]; });
+  if(q&&q.trim()){ var t=q.toLowerCase(); keys=keys.filter(function(k){ return String(k).toLowerCase().includes(t); }); }
+  var html='';
+  keys.slice(0,20).forEach(function(k){
+    var n=obj[k];
+    html+=row(k+'',n,parseInt(k,10)>=400,false);
   });
   el.innerHTML=html||'<div class="row"><span class="k">No matches</span></div>';
 }
 
 function renderAlerts(el,alerts){
-  const q=document.getElementById('q').value;
-  let arr=alerts||[];
-  if(focusIp) arr=arr.filter(a=>a.ip===focusIp);
-  if(q&&q.trim()){ const t=q.toLowerCase(); arr=arr.filter(a=>
-    String(a.ip+a.uri+(a.asn||'')+(a.country||'')+(a.tags||[]).join(' ')).toLowerCase().includes(t)); }
+  var q=document.getElementById('q').value;
+  var arr=alerts||[];
+  if(focusIp) arr=arr.filter(function(a){ return a.ip===focusIp; });
+  if(q&&q.trim()){
+    var t=q.toLowerCase();
+    arr=arr.filter(function(a){
+      return String(a.ip+a.uri+(a.asn||'')+(a.country||'')+(a.tags||[]).join(' ')).toLowerCase().includes(t);
+    });
+  }
   if(!arr.length){
     el.innerHTML='<div class="row"><span class="k">'+(focusIp?'No alerts for focus':'No alerts in buffer')+'</span></div>';
     return;
   }
-  el.innerHTML=arr.map(a=>{
-    const hl=(focusIp&&a.ip===focusIp)?' hl-focus':'';
-    const ap=(a.tags&&a.tags.length)?' '+a.tags.map(t=>`<span class="tag tag-${escapeAttr(t)}">${escapeHtml(t)}</span>`).join(''):'';
-    return `<div class="alert-row${hl}" data-ip="${escapeAttr(a.ip)}">
-      <div class="meta">${escapeHtml(a.ts)} | ${escapeHtml(a.ip)} | ${escapeHtml(a.country||'?')} | st ${a.status} | +${a.score}${ap}</div>
-      <div class="uri">${escapeHtml(a.uri)}</div>
-      <div class="meta">${escapeHtml(a.asn||'')} | UA: ${escapeHtml(a.ua||'')}</div>
-    </div>`;
+  el.innerHTML=arr.map(function(a){
+    var hl=(focusIp&&a.ip===focusIp)?' hl-focus':'';
+    var sc=a.score||0;
+    var sevCls=sc>=10?' sev-hi':sc>=5?' sev-med':'';
+    var pillCls=scorePillCls(sc);
+    var ap=(a.tags&&a.tags.length)?' '+a.tags.map(function(t){ return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>'; }).join(''):'';
+    var flag=ccFlag(a.country||'');
+    return '<div class="alert-row'+hl+sevCls+'" data-ip="'+escapeAttr(a.ip)+'">'
+      +'<div class="alert-hd">'
+      +'<span class="score-pill '+pillCls+'">+'+sc+'</span>'
+      +'<span style="color:#f87171">'+escapeHtml(a.ip)+'</span>'
+      +(flag?'<span style="font-size:14px">'+flag+'</span>':'')
+      +'<span style="color:var(--muted);font-size:10px">'+escapeHtml(a.country||'?')+'</span>'
+      +ap
+      +'<span class="alert-time">'+timeAgo(a.ts)+'</span>'
+      +'</div>'
+      +'<div class="uri">'+escapeHtml(a.uri)+'</div>'
+      +'<div class="ua">'+escapeHtml(a.asn||'')+(a.ua?' | UA: '+escapeHtml(a.ua):'')+'</div>'
+      +'</div>';
   }).join('');
 }
 
 function renderThreats(el,rows){
-  const q=document.getElementById('q').value;
-  let r=rows||[];
-  if(q&&q.trim()){ const t=q.toLowerCase(); r=r.filter(tw=>
-    String(tw.ip+tw.asn+tw.top_path+(tw.country||'')+(tw.tags||[]).join(' ')).toLowerCase().includes(t)); }
-  if(focusIp) r=r.filter(tw=>tw.ip===focusIp);
+  var q=document.getElementById('q').value;
+  var r=rows||[];
+  if(q&&q.trim()){
+    var t=q.toLowerCase();
+    r=r.filter(function(tw){
+      return String(tw.ip+tw.asn+tw.top_path+(tw.country||'')+(tw.tags||[]).join(' ')).toLowerCase().includes(t);
+    });
+  }
+  if(focusIp) r=r.filter(function(tw){ return tw.ip===focusIp; });
   if(!r.length){
     el.innerHTML='<div class="th-row"><span class="ip">'+(focusIp?'No threats for focus':'No scored sources yet')+'</span></div>';
     return;
   }
-  el.innerHTML=r.map(t=>{
-    const hl=(focusIp&&t.ip===focusIp)?' hl-focus':'';
-    const tp=(t.tags&&t.tags.length)?t.tags.map(x=>`<span class="tag tag-${escapeAttr(x)}">${escapeHtml(x)}</span>`).join(''):'';
-    return `<div class="th-row${hl}" data-ip="${escapeAttr(t.ip)}" title="${escapeAttr(t.asn+' '+t.top_path)}">
-      <span class="ip">${escapeHtml(t.ip)}${tp?(' '+tp):''}</span>
-      <span class="sc">${t.score}</span>
-      <span class="hits">${t.hits}</span>
-      <span class="cc">${escapeHtml(t.country||'?')}</span>
-    </div>`;
+  var maxScore=Math.max.apply(null,r.map(function(t){ return t.score||0; }).concat([1]));
+  el.innerHTML=r.map(function(t){
+    var hl=(focusIp&&t.ip===focusIp)?' hl-focus':'';
+    var tp=(t.tags&&t.tags.length)?t.tags.map(function(x){ return '<span class="tag tag-'+escapeAttr(x)+'">'+escapeHtml(x)+'</span>'; }).join(''):'';
+    var barPct=Math.min(Math.round((t.score/maxScore)*100),100);
+    var barColor=t.score>=10?'#dc2626':t.score>=5?'#ea580c':'#f59e0b';
+    var flag=ccFlag(t.country||'');
+    return '<div class="th-row'+hl+'" data-ip="'+escapeAttr(t.ip)+'" title="'+escapeAttr((t.asn||'')+' '+t.top_path)+'">'
+      +'<span class="ip">'+escapeHtml(t.ip)+(tp?' '+tp:'')+'</span>'
+      +'<div class="sc-wrap">'
+      +'<div class="sc-bar" style="width:'+barPct+'%;background:'+barColor+'"></div>'
+      +'<span class="sc-num">'+t.score+'</span>'
+      +'</div>'
+      +'<span class="hits">'+t.hits+'</span>'
+      +'<span class="cc" title="'+escapeHtml(t.country||'?')+'">'+(flag||escapeHtml(t.country||'?'))+'</span>'
+      +'</div>';
   }).join('');
 }
 
 function statusBuckets(st){
-  const a=[0,0,0,0,0];
-  for(const k of Object.keys(st||{})){
-    const v=+st[k], c=parseInt(k,10);
+  var a=[0,0,0,0,0];
+  Object.keys(st||{}).forEach(function(k){
+    var v=+st[k], c=parseInt(k,10);
     if(c>=200&&c<300) a[0]+=v;
     else if(c>=300&&c<400) a[1]+=v;
     else if(c>=400&&c<500) a[2]+=v;
     else if(c>=500&&c<600) a[3]+=v;
     else a[4]+=v;
-  }
+  });
   return a;
 }
 
-function setPoll(ms){
-  pollMs=ms;
-  document.querySelectorAll('.poll-opt').forEach(b=>{
-    b.classList.toggle('on',+b.dataset.ms===ms);
-  });
-  schedulePoll();
+function renderBanList(d){
+  var el=document.getElementById('banList');
+  var bans=d.banned_ips||[];
+  var mh=d.muted_hits||{};
+  if(!bans.length){ el.innerHTML='<div class="row"><span class="k">No muted IPs</span></div>'; return; }
+  el.innerHTML=bans.map(function(ip){
+    var c=mh[ip]||0;
+    return '<div class="ban-row"><span class="kip" title="'+escapeAttr(ip)+'">'+escapeHtml(ip)+'</span>'
+      +'<span class="cnt">'+c+' excl.</span>'
+      +'<button type="button" class="toolbtn" data-unban="'+escapeAttr(ip)+'">Unmute</button></div>';
+  }).join('');
 }
 
+/* Poll control */
+function setPoll(ms){
+  pollMs=ms;
+  document.querySelectorAll('.poll-opt').forEach(function(b){ b.classList.toggle('on',+b.dataset.ms===ms); });
+  schedulePoll();
+}
 function schedulePoll(){
   if(pollTimer) clearInterval(pollTimer);
   pollTimer=null;
   if(paused||pollMs<=0) return;
   pollTimer=setInterval(load,pollMs);
 }
-
 function setPaused(p){
   paused=p;
   document.getElementById('btnPause').classList.toggle('on',p);
@@ -1676,38 +1965,52 @@ function setPaused(p){
 
 function exportJson(){
   if(!lastPayload) return;
-  const blob=new Blob([JSON.stringify(lastPayload,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
+  var blob=new Blob([JSON.stringify(lastPayload,null,2)],{type:'application/json'});
+  var a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download='sentinel-snapshot.json';
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
-let modalIp='';
-function closeModal(){
-  document.getElementById('modalBg').classList.remove('open');
+/* IP Modal */
+function closeModal(){ document.getElementById('modalBg').classList.remove('open'); }
+
+function geoRow(label,val){
+  if(!val||val==='?'||val==='??') return '';
+  return '<div><div class="geo-lbl">'+escapeHtml(label)+'</div><div class="geo-val">'+escapeHtml(val)+'</div></div>';
 }
+
 async function openIpModal(ip){
   if(!ip) return;
   modalIp=ip;
-  document.getElementById('modalTitle').innerText=ip;
-  document.getElementById('modalMeta').innerText='Loading...';
+  document.getElementById('modalIpText').innerText=ip;
+  document.getElementById('modalFlag').innerText='';
+  var geo=document.getElementById('modalGeo');
+  geo.style.display='none'; geo.innerHTML='';
+  document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--muted);font-size:11px">Loading...</span>';
   document.getElementById('modalPaths').innerHTML='';
   document.getElementById('modalBg').classList.add('open');
   try{
-    const r=await fetch('/api/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
-    const j=await r.json();
-    if(!r.ok){ document.getElementById('modalMeta').innerText=j.error||'Error'; return; }
-    const g=j.geo||{};
-    const mt=(j.tags&&j.tags.length)?(' '+j.tags.map(t=>`<span class="tag tag-${escapeAttr(t)}">${escapeHtml(t)}</span>`).join('')):'';
-    document.getElementById('modalMeta').innerHTML=
-      'Hits: '+j.hits+' | Score: '+j.score+mt+'<br/>'+
-      escapeHtml((g.country||'?')+' | '+(g.asn||''));
-    document.getElementById('modalPaths').innerHTML=(j.paths||[]).map(([p,c])=>
-      '<tr><td>'+escapeHtml(p)+'</td><td>'+c+'</td></tr>').join('')||'<tr><td colspan="2">No paths</td></tr>';
+    var res=await fetch('/api/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
+    var j=await res.json();
+    if(!res.ok){ document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--danger)">'+escapeHtml(j.error||'Error')+'</span>'; return; }
+    var g=j.geo||{};
+    var cc=g.country||'';
+    var flag=ccFlag(cc);
+    document.getElementById('modalFlag').innerText=flag?flag+' ':'';
+    var asnParts=(g.asn||'').split(' | ');
+    var geoHtml=geoRow('Country Code',cc)+geoRow('ASN',asnParts[0]||'')+geoRow('ISP / Org',asnParts[1]||asnParts[0]||'')+geoRow('Total Hits',''+j.hits);
+    if(geoHtml){ geo.innerHTML=geoHtml; geo.style.display='grid'; }
+    var sc=j.score||0;
+    var pCls=scorePillCls(sc);
+    var tags=(j.tags&&j.tags.length)?' '+j.tags.map(function(t){ return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>'; }).join(''):'';
+    document.getElementById('modalScoreRow').innerHTML='<span class="score-pill '+pCls+'">score: '+sc+'</span>'+tags;
+    document.getElementById('modalPaths').innerHTML=(j.paths||[]).map(function(p){
+      return '<tr><td>'+escapeHtml(p[0])+'</td><td style="text-align:right">'+p[1]+'</td></tr>';
+    }).join('')||'<tr><td colspan="2" style="color:var(--muted)">No paths recorded</td></tr>';
   }catch(e){
-    document.getElementById('modalMeta').innerText='Request failed';
+    document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--danger)">Request failed</span>';
   }
 }
 
@@ -1730,25 +2033,12 @@ function applyRender(d){
   renderThreats(document.getElementById('threats'),d.top_threats);
 }
 
-function renderBanList(d){
-  const el=document.getElementById('banList');
-  const bans=d.banned_ips||[];
-  const mh=d.muted_hits||{};
-  if(!bans.length){
-    el.innerHTML='<div class="row"><span class="k">No muted IPs</span></div>';
-    return;
-  }
-  el.innerHTML=bans.map(ip=>{
-    const c=mh[ip]||0;
-    return `<div class="ban-row"><span class="kip" title="${escapeAttr(ip)}">${escapeHtml(ip)}</span><span class="cnt">${c} excl.</span><button type="button" class="toolbtn" data-unban="${escapeAttr(ip)}">Unmute</button></div>`;
-  }).join('');
-}
-
+/* Main load */
 async function load(force){
-  if(paused && !force) return;
-  let d;
+  if(paused&&!force) return;
+  var d;
   try{
-    const res=await fetch('/data',{credentials:'same-origin'});
+    var res=await fetch('/data',{credentials:'same-origin'});
     if(res.status===401){
       document.getElementById('foot').innerText='401: reload and sign in (Basic auth for this origin)';
       return;
@@ -1756,131 +2046,161 @@ async function load(force){
     d=await res.json();
   }catch(e){ return; }
   lastPayload=d;
+  lastLoadMs=Date.now();
 
-  const ab=document.getElementById('authBadge');
-  if(ab){ ab.style.display=d.auth_enabled?'inline-flex':'none'; }
+  var ab=document.getElementById('authBadge');
+  if(ab) ab.style.display=d.auth_enabled?'inline-flex':'none';
 
-  document.getElementById('rps').innerText=d.rps;
-  document.getElementById('peak').innerText=d.peak;
-  document.getElementById('total').innerText=d.total.toLocaleString();
-  document.getElementById('uniq').innerText=d.unique_ips;
-  document.getElementById('errs').innerText=(d.client_errors||0)+' / '+(d.server_errors||0);
-  document.getElementById('errpct').innerText=(d.error_rate_pct||0)+'%';
-  document.getElementById('atk').innerText=d.attack_rps_last_tick||0;
+  /* DEFCON posture */
+  updateDefcon(d.threat_level||'NORMAL', d.threat_color);
 
-  const lvl=document.getElementById('lvl');
-  lvl.innerText='POSTURE: '+(d.threat_level||'-');
-  lvl.style.borderColor=d.threat_color||'#334155';
-  lvl.style.color=d.threat_color||'#e2e8f0';
+  /* KPI values */
+  var rpsV=d.rps||0, peakV=d.peak||0, totalV=d.total||0, uniqV=d.unique_ips||0;
+  var errpctV=parseFloat(d.error_rate_pct||0), atkV=d.attack_rps_last_tick||0;
+  var clientE=d.client_errors||0, serverE=d.server_errors||0;
 
-  rpsHist.push(d.rps);
-  const lastAtk=(d.attack_timeline&&d.attack_timeline.length)?d.attack_timeline[d.attack_timeline.length-1]:0;
+  document.getElementById('rps').innerText=rpsV;
+  document.getElementById('peak').innerText=peakV;
+  document.getElementById('total').innerText=totalV.toLocaleString();
+  document.getElementById('uniq').innerText=uniqV;
+  document.getElementById('errs').innerText=clientE+' / '+serverE;
+  document.getElementById('errpct').innerText=errpctV+'%';
+  document.getElementById('atk').innerText=atkV;
+  document.getElementById('mutedTotal').innerText=d.muted_total||0;
+
+  /* KPI color thresholds */
+  kpiLevel('kpi-rps',    rpsV,    20, 80);
+  kpiLevel('kpi-peak',   peakV,   20, 80);
+  kpiLevel('kpi-uniq',   uniqV,   50, 200);
+  kpiLevel('kpi-errs',   clientE+serverE, 10, 50);
+  kpiLevel('kpi-errpct', errpctV, 5,  20);
+  kpiLevel('kpi-atk',    atkV,    2,  10);
+
+  /* KPI deltas */
+  kpiDelta('delta-rps',    rpsV,    prevKpi.rps);
+  kpiDelta('delta-peak',   peakV,   prevKpi.peak);
+  kpiDelta('delta-uniq',   uniqV,   prevKpi.uniq);
+  kpiDelta('delta-errpct', errpctV, prevKpi.errpct);
+  kpiDelta('delta-atk',    atkV,    prevKpi.atk);
+  prevKpi={rps:rpsV,peak:peakV,uniq:uniqV,errpct:errpctV,atk:atkV};
+
+  /* Charts */
+  rpsHist.push(rpsV);
+  var lastAtk=(d.attack_timeline&&d.attack_timeline.length)?d.attack_timeline[d.attack_timeline.length-1]:0;
   atkHist.push(lastAtk);
   if(rpsHist.length>MAX) rpsHist.shift();
   if(atkHist.length>MAX) atkHist.shift();
-
-  const labels=rpsHist.map((_,i)=>i);
-  rpsChart.data.labels=labels;
-  rpsChart.data.datasets[0].data=rpsHist;
-  rpsChart.update('none');
-
-  atkChart.data.labels=labels;
-  atkChart.data.datasets[0].data=atkHist;
-  atkChart.update('none');
-
-  const buck=statusBuckets(d.status);
-  statusDonut.data.datasets[0].data=buck;
+  var labels=rpsHist.map(function(_,i){ return i; });
+  comboChart.data.labels=labels;
+  comboChart.data.datasets[0].data=rpsHist.slice();
+  comboChart.data.datasets[1].data=atkHist.slice();
+  comboChart.update('none');
+  statusDonut.data.datasets[0].data=statusBuckets(d.status);
   statusDonut.update('none');
 
   applyRender(d);
-
-  document.getElementById('mutedTotal').innerText=d.muted_total||0;
   renderBanList(d);
 
-  const ih=document.getElementById('iptablesHintP');
+  /* Alert count / tab title */
+  var alertCount=(d.alerts||[]).length;
+  if(!isPageVisible&&alertCount>knownAlertCount){
+    newAlertsSinceBlur+=alertCount-knownAlertCount;
+    document.title='('+newAlertsSinceBlur+') Sentinel | SOC';
+  }
+  knownAlertCount=alertCount;
+
+  /* iptables hints */
+  var ih=document.getElementById('iptablesHintP');
   if(ih){
     ih.textContent=d.iptables_enabled
-      ? ('Also applying iptables DROP on chain '+d.iptables_chain+' (app must run as root).')
-      : ('iptables off. Set env SENTINEL_IPTABLES=1 to add DROP rules; optional SENTINEL_IPTABLES_CHAIN (default INPUT).');
+      ?('Also applying iptables DROP on chain '+d.iptables_chain+' (app must run as root).')
+      :('iptables off. Set SENTINEL_IPTABLES=1 to add DROP rules.');
   }
-  const ihs=document.getElementById('iptablesHintShort');
-  if(ihs){ ihs.textContent=d.iptables_enabled?'mute + iptables':'mute list'; }
+  var ihs=document.getElementById('iptablesHintShort');
+  if(ihs) ihs.textContent=d.iptables_enabled?'mute + iptables':'mute list';
 
-  const up=d.stream_uptime_s!=null?(' | stream '+d.stream_uptime_s+'s'):'';
-  const poll=paused?'paused':(pollMs/1000)+'s';
-  const au=d.audit_log?' | audit log on':'';
+  var up=d.stream_uptime_s!=null?(' | stream '+d.stream_uptime_s+'s'):'';
+  var poll=paused?'paused':(pollMs/1000)+'s';
+  var au=d.audit_log?' | audit on':'';
   document.getElementById('foot').innerText='Server '+d.server_time+up+' | poll '+poll+au;
 }
 
-document.getElementById('btnPause').addEventListener('click',()=>setPaused(!paused));
-document.querySelectorAll('.poll-opt').forEach(b=>b.addEventListener('click',()=>{ setPaused(false); setPoll(+b.dataset.ms); }));
+/* Sidebar toggle */
+document.getElementById('sbToggle').addEventListener('click',function(){
+  sidebarOpen=!sidebarOpen;
+  document.getElementById('layout').classList.toggle('sb-hidden',!sidebarOpen);
+  document.getElementById('sbToggle').innerHTML=sidebarOpen?'&#9664;':'&#9654;';
+});
+
+/* Event wiring */
+document.getElementById('btnPause').addEventListener('click',function(){ setPaused(!paused); });
+document.querySelectorAll('.poll-opt').forEach(function(b){
+  b.addEventListener('click',function(){ setPaused(false); setPoll(+b.dataset.ms); });
+});
 document.getElementById('btnExport').addEventListener('click',exportJson);
-document.getElementById('btnClearFocus').addEventListener('click',()=>{ setFocus(''); });
+document.getElementById('btnClearFocus').addEventListener('click',function(){ setFocus(''); });
+
 function warnIptables(j){
-  if(j&&j.iptables&&j.iptables.enabled&&!j.iptables.ok){
-    alert('iptables: '+(j.iptables.error||'failed'));
-  }
+  if(j&&j.iptables&&j.iptables.enabled&&!j.iptables.ok){ alert('iptables: '+(j.iptables.error||'failed')); }
 }
-document.getElementById('btnBan').addEventListener('click',async ()=>{
-  const ip=document.getElementById('banIp').value.trim();
-  if(!ip){ return; }
+document.getElementById('btnBan').addEventListener('click',async function(){
+  var ip=document.getElementById('banIp').value.trim();
+  if(!ip) return;
   try{
-    const r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
-    const j=await r.json().catch(()=>({}));
+    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+    var j=await r.json().catch(function(){ return {}; });
     if(!r.ok){ alert(j.error||'Mute failed'); return; }
     warnIptables(j);
     document.getElementById('banIp').value='';
     await load(true);
   }catch(e){ alert('Mute failed'); }
 });
-document.getElementById('banList').addEventListener('click',async e=>{
-  const b=e.target.closest('[data-unban]');
+document.getElementById('banList').addEventListener('click',async function(e){
+  var b=e.target.closest('[data-unban]');
   if(!b||!b.dataset.unban) return;
-  const ip=b.dataset.unban;
+  var ip=b.dataset.unban;
   try{
-    const r=await fetch('/api/unban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
-    const j=await r.json().catch(()=>({}));
+    var r=await fetch('/api/unban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+    var j=await r.json().catch(function(){ return {}; });
     if(!r.ok){ alert(j.error||'Unmute failed'); return; }
     warnIptables(j);
     await load(true);
   }catch(err){ alert('Unmute failed'); }
 });
-document.getElementById('btnReset').addEventListener('click',async ()=>{
+document.getElementById('btnReset').addEventListener('click',async function(){
   if(!confirm('Reset all dashboard counters, charts, alerts, and geo cache?')) return;
   try{
-    const r=await fetch('/api/reset',{method:'POST',credentials:'same-origin'});
+    var r=await fetch('/api/reset',{method:'POST',credentials:'same-origin'});
     if(!r.ok) throw new Error('bad status');
-    lastPayload=null;
-    setFocus('');
-    closeModal();
-    rpsHist=[];
-    atkHist=[];
-    rpsChart.data.labels=[];
-    rpsChart.data.datasets[0].data=[];
-    rpsChart.update('none');
-    atkChart.data.labels=[];
-    atkChart.data.datasets[0].data=[];
-    atkChart.update('none');
+    lastPayload=null; setFocus(''); closeModal();
+    rpsHist=[]; atkHist=[];
+    comboChart.data.labels=[];
+    comboChart.data.datasets[0].data=[];
+    comboChart.data.datasets[1].data=[];
+    comboChart.update('none');
     statusDonut.data.datasets[0].data=[0,0,0,0,0];
     statusDonut.update('none');
     setPaused(false);
     await load(true);
-  }catch(e){
-    alert('Reset failed');
-  }
+  }catch(e){ alert('Reset failed'); }
 });
-document.getElementById('q').addEventListener('input',()=>{ if(lastPayload) applyRender(lastPayload); });
 
-document.getElementById('modalBg').addEventListener('click',e=>{ if(e.target.id==='modalBg') closeModal(); });
+document.getElementById('q').addEventListener('input',function(){ if(lastPayload) applyRender(lastPayload); });
+document.getElementById('modalBg').addEventListener('click',function(e){ if(e.target.id==='modalBg') closeModal(); });
 document.getElementById('modalClose').addEventListener('click',closeModal);
-document.getElementById('modalCopy').addEventListener('click',()=>{
+document.getElementById('modalCopy').addEventListener('click',function(){
   if(modalIp&&navigator.clipboard) navigator.clipboard.writeText(modalIp);
 });
-document.getElementById('modalBan').addEventListener('click',async ()=>{
+document.getElementById('modalExtLink').addEventListener('click',function(e){
+  e.preventDefault();
+  if(!modalIp) return;
+  window.open('http://ip-api.com/json/'+encodeURIComponent(modalIp),'_blank','noopener');
+});
+document.getElementById('modalBan').addEventListener('click',async function(){
   if(!modalIp) return;
   try{
-    const r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
-    const j=await r.json().catch(()=>({}));
+    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
+    var j=await r.json().catch(function(){ return {}; });
     if(!r.ok){ alert(j.error||'Mute failed'); return; }
     warnIptables(j);
     closeModal();
@@ -1888,16 +2208,16 @@ document.getElementById('modalBan').addEventListener('click',async ()=>{
   }catch(e){ alert('Mute failed'); }
 });
 
-document.body.addEventListener('click',e=>{
-  const ipRow=e.target.closest('.row-ip');
+document.body.addEventListener('click',function(e){
+  var ipRow=e.target.closest('.row-ip');
   if(ipRow&&ipRow.dataset.ip){ setFocus(ipRow.dataset.ip); openIpModal(ipRow.dataset.ip); return; }
-  const th=e.target.closest('.th-row[data-ip]');
+  var th=e.target.closest('.th-row[data-ip]');
   if(th&&th.dataset.ip){ setFocus(th.dataset.ip); openIpModal(th.dataset.ip); return; }
-  const ar=e.target.closest('.alert-row');
+  var ar=e.target.closest('.alert-row');
   if(ar&&ar.dataset.ip){ setFocus(ar.dataset.ip); openIpModal(ar.dataset.ip); return; }
 });
 
-document.addEventListener('keydown',e=>{
+document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){ closeModal(); return; }
   if(e.key==='/'&&document.activeElement.tagName!=='INPUT'){ e.preventDefault(); document.getElementById('q').focus(); }
 });

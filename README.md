@@ -98,6 +98,81 @@ Example unit: `sentinel.service` (adjust `WorkingDirectory`, `ExecStart`, and `R
 
 Reference Caddyfile snippets: `caddy-recommended.caddyfile`.
 
+## Multi-source ingestion — remote push agent
+
+`sentinel_push.py` is a lightweight agent for servers that run Caddy but cannot share a log directory with the Sentinel host. It tails a local log file and POSTs NDJSON batches to Sentinel's `/api/ingest` endpoint.
+
+### Requirements (on the remote server)
+
+```bash
+pip install requests
+```
+
+### Install
+
+```bash
+sudo cp sentinel_push.py /opt/sentinel/sentinel_push.py
+```
+
+Create `/etc/systemd/system/sentinel-push.service`:
+
+```ini
+[Unit]
+Description=Sentinel log push agent
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/sentinel/sentinel_push.py
+Environment="PUSH_LOG_PATH=/var/log/caddy/access.log"
+Environment="SENTINEL_URL=http://<sentinel-host>:5000/api/ingest"
+Environment="SENTINEL_INGEST_KEY=your-secret-key"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Set `PUSH_LOG_PATH` to match your server's actual Caddy log path, and `SENTINEL_URL` to point at your Sentinel instance.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now sentinel-push
+sudo journalctl -u sentinel-push -f
+```
+
+You should see `Pushing /path/to/log -> http://… as 'hostname'` in the journal.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PUSH_LOG_PATH` | `/var/log/caddy/access.log` | Log file to tail |
+| `SENTINEL_URL` | `http://localhost:5000/api/ingest` | Sentinel ingest endpoint |
+| `SENTINEL_INGEST_KEY` | _(none)_ | Bearer token — must match `SENTINEL_INGEST_KEY` on the Sentinel host |
+| `PUSH_SOURCE` | hostname | Label shown in the Sentinel Log Sources card |
+| `PUSH_BATCH` | `50` | Max lines per POST |
+| `PUSH_INTERVAL` | `2` | Seconds to wait when no new lines are available |
+
+### Sentinel host — enable ingest
+
+Set `SENTINEL_INGEST_KEY` to a shared secret on the Sentinel host:
+
+```bash
+sudo systemctl edit sentinel
+```
+
+```ini
+[Service]
+Environment="SENTINEL_INGEST_KEY=your-secret-key"
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart sentinel
+```
+
+The `/api/ingest` endpoint is automatically excluded from Basic Auth so the push agent can reach it without browser credentials.
+
 ## HTTP API
 
 | Method | Path | Notes |

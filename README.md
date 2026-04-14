@@ -94,4 +94,4 @@ When auth is enabled, failed attempts are audited (if auditing is on).
 
 ## License
 
-No license file is bundled; add one if you distribute the project.
+MIT — free to use, modify, and distribute. See [LICENSE](LICENSE).

@@ -1410,22 +1410,48 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .sc-seg.lit{border-color:transparent;}
 .sc-num{font-size:10px;color:var(--warn);min-width:22px;text-align:right;font-weight:700;}
 /* Modal */
-.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100;align-items:flex-start;justify-content:center;padding:24px;overflow:auto;backdrop-filter:blur(4px);}
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;backdrop-filter:blur(6px);}
 .modal-backdrop.open{display:flex;}
-.modal{width:100%;max-width:700px;background:var(--surface-solid);border:1px solid var(--border-bright);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 40px rgba(0,212,255,0.05);margin:auto;animation:modalIn .2s cubic-bezier(0.4,0,0.2,1);}
-@keyframes modalIn{from{opacity:0;transform:translateY(18px) scale(0.98);}to{opacity:1;transform:none;}}
-.modal-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);}
-.modal-hd h3{margin:0;font-size:15px;font-family:var(--mono);display:flex;align-items:center;gap:8px;color:var(--accent);}
-.modal-bd{padding:14px 18px 18px;max-height:72vh;overflow:auto;}
-.modal-geo{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:14px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:9px;padding:12px 14px;}
-.geo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:2px;}
-.geo-val{font-family:var(--mono);font-size:12px;color:var(--text);}
-.modal-score-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:14px;}
-.path-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;}
-.path-table th,.path-table td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);}
-.path-table th{color:var(--muted);font-weight:600;font-size:10px;letter-spacing:.08em;text-transform:uppercase;}
-.path-table td:last-child{text-align:right;color:var(--accent);}
-.path-table tr:hover td{background:rgba(255,255,255,0.02);}
+@keyframes modalIn{from{opacity:0;transform:translateY(22px) scale(0.97);}to{opacity:1;transform:none;}}
+.modal{width:100%;max-width:680px;background:#080d18;border:1px solid var(--border-bright);border-radius:16px;box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 60px rgba(0,212,255,0.06);margin:auto;animation:modalIn .22s cubic-bezier(0.4,0,0.2,1);overflow:hidden;}
+/* Header banner */
+.modal-banner{padding:20px 22px 16px;position:relative;overflow:hidden;border-bottom:1px solid var(--border);}
+.modal-banner::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(0,212,255,0.07) 0%,transparent 60%);pointer-events:none;}
+.modal-banner-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.modal-ip-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.modal-flag{font-size:26px;line-height:1;-webkit-text-fill-color:initial;}
+.modal-ip{font-family:var(--mono);font-size:1.25rem;font-weight:700;color:var(--accent);letter-spacing:-.01em;text-shadow:0 0 20px rgba(0,212,255,0.4);}
+.modal-cc-pill{font-size:10px;font-family:var(--mono);font-weight:700;letter-spacing:.1em;padding:2px 8px;border-radius:4px;background:rgba(0,212,255,0.1);color:var(--accent);border:1px solid var(--border-bright);}
+.modal-actions{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;}
+/* Stat strip */
+.modal-stats{display:flex;gap:0;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:rgba(0,0,0,0.3);}
+.modal-stat{flex:1;padding:8px 14px;border-right:1px solid var(--border);min-width:0;}
+.modal-stat:last-child{border-right:none;}
+.modal-stat-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:3px;font-weight:500;}
+.modal-stat-val{font-family:var(--mono);font-size:1rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text);}
+.modal-stat-val.hi{color:var(--danger);text-shadow:0 0 10px rgba(239,68,68,0.5);}
+.modal-stat-val.med{color:var(--warn);text-shadow:0 0 10px rgba(245,158,11,0.5);}
+.modal-stat-val.ok{color:var(--ok);text-shadow:0 0 10px rgba(34,197,94,0.5);}
+/* Geo strip */
+.modal-geo-strip{display:flex;gap:24px;flex-wrap:wrap;padding:14px 22px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);}
+.modal-geo-item{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.geo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:500;}
+.geo-val{font-family:var(--mono);font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Tags row */
+.modal-tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 22px;border-bottom:1px solid var(--border);min-height:40px;}
+.modal-tags-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:500;margin-right:2px;}
+/* Paths section */
+.modal-paths-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 22px 6px;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600;}
+.modal-paths-hd span:last-child{text-align:right;}
+.path-list{padding:0 10px 14px;}
+.path-row{display:flex;align-items:center;gap:10px;padding:6px 12px;border-radius:7px;font-family:var(--mono);font-size:11px;transition:background var(--transition);cursor:default;margin-bottom:2px;position:relative;overflow:hidden;}
+.path-row:hover{background:rgba(0,212,255,0.05);}
+.path-row-bg{position:absolute;left:0;top:0;bottom:0;background:rgba(0,212,255,0.055);border-radius:7px;pointer-events:none;transition:width .4s cubic-bezier(0.4,0,0.2,1);}
+.path-row-rank{font-size:9px;color:var(--muted);min-width:16px;text-align:right;flex-shrink:0;font-weight:700;}
+.path-row-rank.r1{color:var(--accent);}
+.path-row-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1;position:relative;}
+.path-row-hits{font-size:11px;color:var(--accent);font-weight:700;flex-shrink:0;position:relative;font-variant-numeric:tabular-nums;}
+.path-row-pct{font-size:9px;color:var(--muted);flex-shrink:0;min-width:32px;text-align:right;position:relative;font-variant-numeric:tabular-nums;}
 /* Muted IPs */
 .ban-inp{flex:1;min-width:0;padding:7px 11px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color var(--transition),box-shadow var(--transition);}
 .ban-inp:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim);}
@@ -1575,26 +1601,35 @@ kbd{font-family:var(--mono);font-size:10px;padding:2px 5px;border:1px solid var(
 <footer id="foot">Server time &mdash;</footer>
 
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
-  <div class="modal" role="dialog" aria-labelledby="modalTitle">
-    <div class="modal-hd">
-      <h3 id="modalTitle">
-        <span id="modalFlag" style="font-size:20px;-webkit-text-fill-color:initial"></span>
-        <span id="modalIpText">&mdash;</span>
-      </h3>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
-        <button type="button" class="toolbtn" id="modalExtLink">ip-api &#8599;</button>
-        <button type="button" class="toolbtn danger" id="modalBan">Mute IP</button>
-        <button type="button" class="toolbtn" id="modalClose">Close</button>
+  <div class="modal" role="dialog" aria-labelledby="modalIpText">
+    <div class="modal-banner">
+      <div class="modal-banner-top">
+        <div class="modal-ip-line">
+          <span class="modal-flag" id="modalFlag"></span>
+          <span class="modal-ip" id="modalIpText">&mdash;</span>
+          <span class="modal-cc-pill" id="modalCcPill" style="display:none"></span>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
+          <button type="button" class="toolbtn" id="modalExtLink">Lookup &#8599;</button>
+          <button type="button" class="toolbtn danger" id="modalBan">Mute</button>
+          <button type="button" class="toolbtn" id="modalClose">&#10005;</button>
+        </div>
+      </div>
+      <div class="modal-stats" id="modalStats">
+        <div class="modal-stat"><div class="modal-stat-lbl">Total hits</div><div class="modal-stat-val" id="mStatHits">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Threat score</div><div class="modal-stat-val" id="mStatScore">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Unique paths</div><div class="modal-stat-val" id="mStatPaths">&mdash;</div></div>
+        <div class="modal-stat"><div class="modal-stat-lbl">Classification</div><div class="modal-stat-val" id="mStatClass">&mdash;</div></div>
       </div>
     </div>
-    <div class="modal-bd">
-      <div class="modal-geo" id="modalGeo" style="display:none"></div>
-      <div class="modal-score-row" id="modalScoreRow"></div>
-      <table class="path-table">
-        <thead><tr><th>Path</th><th style="text-align:right">Hits</th></tr></thead>
-        <tbody id="modalPaths"></tbody>
-      </table>
+    <div class="modal-geo-strip" id="modalGeoStrip" style="display:none"></div>
+    <div class="modal-tags" id="modalTagsRow" style="display:none">
+      <span class="modal-tags-lbl">Tags</span>
+    </div>
+    <div id="modalPathsWrap">
+      <div class="modal-paths-hd"><span>Requested paths</span><span>Hits &nbsp; %</span></div>
+      <div class="path-list" id="modalPaths"></div>
     </div>
   </div>
 </div>
@@ -1947,46 +1982,96 @@ function exportJson(){
 /* IP Modal */
 function closeModal(){ document.getElementById('modalBg').classList.remove('open'); }
 
-function geoRow(label,val){
-  if(!val||val==='?'||val==='??') return '';
-  return '<div><div class="geo-lbl">'+escapeHtml(label)+'</div><div class="geo-val">'+escapeHtml(val)+'</div></div>';
-}
+
 
 async function openIpModal(ip){
   if(!ip) return;
   modalIp=ip;
   document.getElementById('modalIpText').innerText=ip;
   document.getElementById('modalFlag').innerText='';
-  var geo=document.getElementById('modalGeo');
-  geo.style.display='none'; geo.innerHTML='';
-  document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--muted);font-size:11px">Loading...</span>';
-  document.getElementById('modalPaths').innerHTML='';
+  document.getElementById('modalCcPill').style.display='none';
+  document.getElementById('modalGeoStrip').style.display='none';
+  document.getElementById('modalTagsRow').style.display='none';
+  document.getElementById('mStatHits').innerText='\u2014';
+  document.getElementById('mStatScore').innerText='\u2014';
+  document.getElementById('mStatPaths').innerText='\u2014';
+  document.getElementById('mStatClass').innerText='...';
+  document.getElementById('mStatClass').className='modal-stat-val';
+  document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">Loading\u2026</div>';
   document.getElementById('modalBg').classList.add('open');
   try{
     var res=await fetch('/api/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
     var j=await res.json();
-    if(!res.ok){ document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--danger)">'+escapeHtml(j.error||'Error')+'</span>'; return; }
-    var g=j.geo||{};
-    var cc=g.country||'';
-    var flag=ccFlag(cc);
-    document.getElementById('modalFlag').innerText=flag?flag+' ':'';
-    var asnParts=(g.asn||'').split(' | ');
-    var geoHtml=geoRow('Country Code',cc)+geoRow('ASN',asnParts[0]||'')+geoRow('ISP / Org',asnParts[1]||asnParts[0]||'')+geoRow('Total Hits',''+j.hits);
-    if(geoHtml){ geo.innerHTML=geoHtml; geo.style.display='grid'; }
-    var sc=j.score||0;
-    var pCls=scorePillCls(sc);
-    var tags=(j.tags&&j.tags.length)?' '+j.tags.map(function(t){ return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>'; }).join(''):'';
-    document.getElementById('modalScoreRow').innerHTML='<span class="score-pill '+pCls+'">score: '+sc+'</span>'+tags;
-    var maxHits=Math.max.apply(null,(j.paths||[]).map(function(p){return p[1]||0;}).concat([1]));
-    document.getElementById('modalPaths').innerHTML=(j.paths||[]).map(function(p){
-      var pct=Math.round((p[1]/maxHits)*100);
-      return '<tr><td>'+escapeHtml(p[0])+'</td>'
-        +'<td style="text-align:right;position:relative;min-width:80px">'
-        +'<div style="position:absolute;right:0;top:0;bottom:0;width:'+pct+'%;background:rgba(0,212,255,0.07);border-radius:2px;pointer-events:none"></div>'
-        +'<span style="position:relative">'+p[1]+'</span></td></tr>';
-    }).join('')||'<tr><td colspan="2" style="color:var(--muted)">No paths recorded</td></tr>';
+    if(!res.ok){
+      document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--danger);font-family:var(--mono);font-size:12px;text-align:center">'+escapeHtml(j.error||'Error')+'</div>';
+      return;
+    }
+    var g=j.geo||{}, cc=g.country||'', flag=ccFlag(cc);
+    var asnRaw=g.asn||'', asnParts=asnRaw.split(' | ');
+    var asnNum=asnParts[0]||'', isp=asnParts[1]||asnParts[0]||'';
+    var sc=j.score||0, tags=j.tags||[], paths=j.paths||[];
+
+    if(flag) document.getElementById('modalFlag').innerText=flag;
+    if(cc&&cc!=='??'){
+      var pill=document.getElementById('modalCcPill');
+      pill.innerText=cc; pill.style.display='inline-flex';
+    }
+
+    // Stat strip
+    var scoreEl=document.getElementById('mStatScore');
+    scoreEl.innerText=sc;
+    scoreEl.className='modal-stat-val '+(sc>=10?'hi':sc>=5?'med':'ok');
+    document.getElementById('mStatHits').innerText=(j.hits||0).toLocaleString();
+    document.getElementById('mStatPaths').innerText=paths.length;
+    var classEl=document.getElementById('mStatClass');
+    if(tags.length){
+      classEl.innerHTML=tags.map(function(t){return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>';}).join(' ');
+      classEl.className='modal-stat-val';
+    } else {
+      classEl.innerText='clean'; classEl.className='modal-stat-val ok';
+    }
+
+    // Geo strip
+    var geoItems=[];
+    if(isp) geoItems.push(['ISP / Org',isp]);
+    if(asnNum&&asnNum!==isp) geoItems.push(['ASN',asnNum]);
+    if(cc&&cc!=='??') geoItems.push(['Country',cc]);
+    if(geoItems.length){
+      var gs=document.getElementById('modalGeoStrip');
+      gs.innerHTML=geoItems.map(function(item){
+        return '<div class="modal-geo-item"><div class="geo-lbl">'+escapeHtml(item[0])+'</div><div class="geo-val" title="'+escapeAttr(item[1])+'">'+escapeHtml(item[1])+'</div></div>';
+      }).join('');
+      gs.style.display='flex';
+    }
+
+    // Tags row
+    if(tags.length){
+      var tr=document.getElementById('modalTagsRow');
+      tr.innerHTML='<span class="modal-tags-lbl">Tags</span>'
+        +tags.map(function(t){return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>';}).join('');
+      tr.style.display='flex';
+    }
+
+    // Paths list
+    if(!paths.length){
+      document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">No path data recorded</div>';
+    } else {
+      var total=paths.reduce(function(s,p){return s+(p[1]||0);},0)||1;
+      var maxH=paths[0][1]||1;
+      document.getElementById('modalPaths').innerHTML=paths.map(function(p,i){
+        var barPct=Math.round(((p[1]||0)/maxH)*100);
+        var sharePct=(((p[1]||0)/total)*100).toFixed(1);
+        return '<div class="path-row">'
+          +'<div class="path-row-bg" style="width:'+barPct+'%"></div>'
+          +'<span class="path-row-rank'+(i===0?' r1':'')+'">'+(i+1)+'</span>'
+          +'<span class="path-row-text" title="'+escapeAttr(p[0])+'">'+escapeHtml(p[0])+'</span>'
+          +'<span class="path-row-hits">'+p[1]+'</span>'
+          +'<span class="path-row-pct">'+sharePct+'%</span>'
+          +'</div>';
+      }).join('');
+    }
   }catch(e){
-    document.getElementById('modalScoreRow').innerHTML='<span style="color:var(--danger)">Request failed</span>';
+    document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--danger);font-family:var(--mono);font-size:12px;text-align:center">Request failed</div>';
   }
 }
 

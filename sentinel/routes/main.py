@@ -217,6 +217,8 @@ def api_tls_fp_delete():
         )[:20]
 
     _audit_write("tls_fp_delete", _audit_actor(), {"fp": fp, "affected_ips": len(affected_ips)})
+    from sentinel.persistence import _save_parsed_state
+    _save_parsed_state()
     return jsonify({"ok": True, "deleted_fp": fp, "affected_ips": len(affected_ips), "tls_fp_shared": remaining})
 
 

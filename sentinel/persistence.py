@@ -347,9 +347,15 @@ def _load_parsed_state():
                 c[str(p)] += int(cnt)
             state.ip_paths[str(ip)] = c
 
+        # Tags derived from runtime-only state (tls_fp_to_ips, ua_burst_window)
+        # are not persisted alongside their source data, so strip them on load
+        # to avoid stale badges that no longer match the live detection state.
+        _RUNTIME_TAGS = {"shared_tls_fp", "ua_burst"}
         state.ip_tags.clear()
         for ip, tags in dict(data.get("ip_tags", {})).items():
-            state.ip_tags[str(ip)] = set(str(t) for t in list(tags))
+            cleaned = set(str(t) for t in list(tags)) - _RUNTIME_TAGS
+            if cleaned:
+                state.ip_tags[str(ip)] = cleaned
 
         state.asn_ips.clear()
         for asn, ip_list in dict(data.get("asn_ips", {})).items():

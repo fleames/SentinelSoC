@@ -314,6 +314,25 @@ def botnet_detection_worker():
             pass
 
 
+def _campaign_for_api(raw):
+    c = raw if isinstance(raw, dict) else {}
+    return {
+        "id": str(c.get("id", "")),
+        "trigger_uri": str(c.get("trigger_uri", "")),
+        "detected_at": float(c.get("detected_at", 0) or 0),
+        "last_active": float(c.get("last_active", 0) or 0),
+        "total_hits": int(c.get("total_hits", 0) or 0),
+        "ip_count": int(c.get("ip_count", 0) or 0),
+        "ips": [str(x) for x in list(c.get("ips", []))[:30]],
+        "subnet_count": int(c.get("subnet_count", 0) or 0),
+        "asn_count": int(c.get("asn_count", 0) or 0),
+        "asns": [str(x) for x in list(c.get("asns", []))[:10]],
+        "country_count": int(c.get("country_count", 0) or 0),
+        "countries": [str(x) for x in list(c.get("countries", []))[:20]],
+        "confidence": int(c.get("confidence", 0) or 0),
+    }
+
+
 def _normalize_client_ip(s):
     if not s or not isinstance(s, str):
         return None
@@ -1250,11 +1269,16 @@ def health():
 @app.route("/data")
 def data():
     with lock:
+        rps_now = rps
+        peak_now = peak_rps
+        total_now = total
+        client_err_now = client_err
+        server_err_now = server_err
         uniq = len(ips)
-        te = client_err + server_err
-        err_rate = round(100.0 * te / total, 2) if total else 0.0
+        te = client_err_now + server_err_now
+        err_rate = round(100.0 * te / total_now, 2) if total_now else 0.0
         top_ip_n = ips.most_common(1)
-        top_share = round(100.0 * top_ip_n[0][1] / total, 1) if total and top_ip_n else 0.0
+        top_share = round(100.0 * top_ip_n[0][1] / total_now, 1) if total_now and top_ip_n else 0.0
         attack_rps = attack_timeline[-1] if attack_timeline else 0
         level, level_color = threat_level_label(attack_rps, err_rate, top_share)
 
@@ -1264,6 +1288,8 @@ def data():
             if sc <= 0:
                 continue
             g = ip_geo.get(tip, {})
+            if not isinstance(g, dict):
+                g = {}
             top_path = ip_paths[tip].most_common(1)
             p = top_path[0][0] if top_path else ""
             threats_enriched.append(
@@ -1285,40 +1311,64 @@ def data():
         banned_sorted = sorted(banned_ips)
         muted_dict = {k: int(muted_hits[k]) for k in banned_sorted}
         ip_tags_payload = {k: sorted(v) for k, v in ip_tags.items() if v}
+        ips_top = ips.most_common(15)
+        domains_top = domains.most_common(10)
+        referers_top = referers.most_common(10)
+        paths_top = paths.most_common(10)
+        status_snapshot = dict(status_codes)
+        asn_top = asn_counts.most_common(10)
+        countries_top = countries.most_common(12)
+        scores_snapshot = dict(ip_scores)
+        geo_snapshot = {}
+        for k, v in ip_geo.items():
+            if isinstance(v, dict):
+                geo_snapshot[k] = {
+                    "country": str(v.get("country", "??") or "??"),
+                    "asn": str(v.get("asn", "Unknown") or "Unknown"),
+                }
+            else:
+                geo_snapshot[k] = {"country": "??", "asn": "Unknown"}
+        rps_timeline_snapshot = list(rps_timeline)
+        attack_timeline_snapshot = list(attack_timeline)
+        stream_parse_debug_snapshot = dict(stream_parse_debug)
 
     # Snapshot botnet campaigns under their own lock (after releasing main lock)
     with botnet_lock:
-        campaigns_snapshot = sorted(
-            botnet_campaigns.values(), key=lambda c: -c["confidence"]
-        )
+        campaigns_snapshot = [
+            _campaign_for_api(c)
+            for c in sorted(
+                botnet_campaigns.values(),
+                key=lambda c: -int((c if isinstance(c, dict) else {}).get("confidence", 0) or 0),
+            )
+        ]
 
     return jsonify(
         {
-            "rps": rps,
-            "peak": peak_rps,
-            "total": total,
+            "rps": rps_now,
+            "peak": peak_now,
+            "total": total_now,
             "unique_ips": uniq,
-            "client_errors": client_err,
-            "server_errors": server_err,
+            "client_errors": client_err_now,
+            "server_errors": server_err_now,
             "error_rate_pct": err_rate,
             "threat_level": level,
             "threat_color": level_color,
             "attack_rps_last_tick": attack_rps,
             "stream_uptime_s": uptime_s,
-            "ips": ips.most_common(15),
-            "domains": domains.most_common(10),
-            "referers": referers.most_common(10),
-            "paths": paths.most_common(10),
-            "status": dict(status_codes),
-            "asn": asn_counts.most_common(10),
-            "countries": countries.most_common(12),
-            "scores": dict(ip_scores),
-            "geo": ip_geo,
+            "ips": ips_top,
+            "domains": domains_top,
+            "referers": referers_top,
+            "paths": paths_top,
+            "status": status_snapshot,
+            "asn": asn_top,
+            "countries": countries_top,
+            "scores": scores_snapshot,
+            "geo": geo_snapshot,
             "top_threats": threats_enriched,
             "alerts": alerts_list,
             "botnet_campaigns": campaigns_snapshot,
-            "rps_timeline": rps_timeline,
-            "attack_timeline": attack_timeline,
+            "rps_timeline": rps_timeline_snapshot,
+            "attack_timeline": attack_timeline_snapshot,
             "server_time": datetime.now(timezone.utc).isoformat(),
             "banned_ips": banned_sorted,
             "muted_hits": muted_dict,
@@ -1332,7 +1382,7 @@ def data():
             "ban_list_path": BAN_LIST_PATH,
             "log_path": _effective_log_path(),
             "log_from_start": _effective_log_from_start(),
-            "stream_parse_debug": dict(stream_parse_debug),
+            "stream_parse_debug": stream_parse_debug_snapshot,
             "ip_tags": ip_tags_payload,
         }
     )
@@ -1899,7 +1949,14 @@ function makeGrad(ctx,chart,colorTop,colorBot){
 }
 
 // ── Combo chart ──
-const comboChart=new Chart(document.getElementById('comboChart'),{
+var hasChartJs=(typeof Chart==='function');
+if(!hasChartJs){
+  var comboCanvas=document.getElementById('comboChart');
+  if(comboCanvas) comboCanvas.title='Chart.js unavailable (blocked by browser/privacy settings)';
+  var donutCanvas=document.getElementById('statusDonut');
+  if(donutCanvas) donutCanvas.title='Chart.js unavailable (blocked by browser/privacy settings)';
+}
+const comboChart=hasChartJs?new Chart(document.getElementById('comboChart'),{
   type:'line',
   data:{labels:[],datasets:[
     {label:'RPS',data:[],borderColor:'#00d4ff',borderWidth:1.5,
@@ -1924,9 +1981,9 @@ const comboChart=new Chart(document.getElementById('comboChart'),{
          title:{display:true,text:'RPS',color:'#4a5568',font:{size:9}}},
       y2:{beginAtZero:true,position:'right',grid:{display:false},ticks:{color:'#f87171',font:{size:9}},
           title:{display:true,text:'Susp/s',color:'#f87171',font:{size:9}}}}}
-});
+}):{data:{labels:[],datasets:[{data:[]},{data:[]}]},update:function(){}};
 
-const statusDonut=new Chart(document.getElementById('statusDonut'),{
+const statusDonut=hasChartJs?new Chart(document.getElementById('statusDonut'),{
   type:'doughnut',
   data:{labels:['2xx','3xx','4xx','5xx','other'],
     datasets:[{data:[0,0,0,0,0],
@@ -1943,7 +2000,7 @@ const statusDonut=new Chart(document.getElementById('statusDonut'),{
           var sum=c.dataset.data.reduce(function(a,b){return a+b;},0)||1;
           return c.label+': '+c.raw+' ('+((c.raw/sum)*100).toFixed(1)+'%)';
         }}}}}
-});
+}):{data:{datasets:[{data:[0,0,0,0,0]}]},update:function(){}};
 
 // ── World map ──
 function initWorldMap(){
@@ -2204,7 +2261,7 @@ function renderBotnetCampaigns(el,campaigns){
     var cls=confCls(c.confidence);
     var flags=(c.countries||[]).slice(0,7).map(function(cc){return ccFlag(cc)||cc;}).join('');
     var age=timeAgo(new Date(c.detected_at*1000).toISOString());
-    return '<div class="bn-row" title="Campaign '+escapeAttr(c.id)+'\nFirst seen: '+age+'\nSubnets: '+c.subnet_count+'\nHits: '+c.total_hits+'">'
+    return '<div class="bn-row" title="Campaign '+escapeAttr(c.id)+'\\nFirst seen: '+age+'\\nSubnets: '+c.subnet_count+'\\nHits: '+c.total_hits+'">'
       +'<span class="bn-id">'+escapeHtml(c.id)+'</span>'
       +'<span class="bn-uri" title="'+escapeAttr(c.trigger_uri)+'">'+escapeHtml(c.trigger_uri)+'</span>'
       +'<span class="bn-num">'+c.ip_count+'</span>'
@@ -2442,8 +2499,14 @@ async function load(force){
   statusDonut.data.datasets[0].data=statusBuckets(d.status);
   statusDonut.update('none');
 
-  applyRender(d);
-  renderBanList(d);
+  var renderErr=null;
+  try{
+    applyRender(d);
+    renderBanList(d);
+  }catch(e){
+    renderErr=e;
+    console.error('render failure',e);
+  }
 
   /* Alert count / tab title */
   var alertCount=(d.alerts||[]).length;
@@ -2461,7 +2524,7 @@ async function load(force){
   var up=d.stream_uptime_s!=null?(' | stream '+d.stream_uptime_s+'s'):'';
   var poll=paused?'paused':(pollMs/1000)+'s';
   var au=d.audit_log?' | audit on':'';
-  document.getElementById('foot').innerText='Server '+d.server_time+up+' | poll '+poll+au;
+  document.getElementById('foot').innerText='Server '+d.server_time+up+' | poll '+poll+au+(renderErr?' | render error':'');
   initWorldMap();
 }
 

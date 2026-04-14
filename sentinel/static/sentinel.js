@@ -904,6 +904,69 @@ function toggleIpFocus(ip){
   openIpModal(ip);
 }
 
+function fmtFp(fp){
+  // Shorten long fingerprint strings for display
+  if(!fp) return '(none)';
+  if(fp.length<=32) return fp;
+  return fp.slice(0,12)+'...'+fp.slice(-8);
+}
+
+function renderTlsFp(el,rows){
+  if(!el) return;
+  if(!rows||!rows.length){
+    el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No shared fingerprints detected</span></div>';
+    return;
+  }
+  var h='';
+  rows.forEach(function(r){
+    var fp=r[0]||'', cnt=r[1]||0;
+    var isCf=fp.length<=32&&!/^tls:/.test(fp);
+    var label=isCf?'JA3':'TLS';
+    var tagCls=isCf?'tag-bot':'tag-scan';
+    h+='<div class="list-row">';
+    h+='<span class="list-key" style="font-family:var(--mono);font-size:10px" title="'+fp+'"><span class="tag '+tagCls+'">'+label+'</span> '+fmtFp(fp)+'</span>';
+    h+='<span class="list-val" style="color:var(--accent3)">'+cnt+' IPs</span>';
+    h+='</div>';
+  });
+  el.innerHTML=h;
+}
+
+function fmtStorageBytes(b){
+  if(b==null) return '0 B';
+  if(b<1024) return b+' B';
+  if(b<1048576) return (b/1024).toFixed(1)+' KB';
+  if(b<1073741824) return (b/1048576).toFixed(2)+' MB';
+  return (b/1073741824).toFixed(2)+' GB';
+}
+
+function renderStorage(el,s){
+  if(!el||!s) return;
+  var labels={
+    bans:'Ban list',
+    audit:'Audit log',
+    parsed_state:'Parsed state',
+    behavior_state:'Behavior state',
+    history_buckets:'History buckets',
+    history_events:'History events'
+  };
+  var order=['bans','audit','parsed_state','behavior_state','history_buckets','history_events'];
+  var h='';
+  order.forEach(function(k){
+    var sz=s[k]||0;
+    var extra='';
+    if(k==='history_events'&&s.history_events_files) extra=' <span style="color:var(--muted)">'+s.history_events_files+' files</span>';
+    h+='<div class="list-row">';
+    h+='<span class="list-key">'+labels[k]+'</span>';
+    h+='<span class="list-val" style="color:var(--accent)">'+fmtStorageBytes(sz)+extra+'</span>';
+    h+='</div>';
+  });
+  h+='<div class="list-row" style="border-top:1px solid var(--border);margin-top:4px">';
+  h+='<span class="list-key" style="font-weight:600">Total</span>';
+  h+='<span class="list-val" style="color:var(--ok);font-weight:600">'+fmtStorageBytes(s.total||0)+'</span>';
+  h+='</div>';
+  el.innerHTML=h;
+}
+
 function applyRender(d){
   renderIpList(document.getElementById('ips'),d.ips,d.ip_tags||{});
   renderList(document.getElementById('domains'),d.domains);
@@ -915,6 +978,8 @@ function applyRender(d){
   renderThreats(document.getElementById('threats'),d.top_threats);
   renderBotnetCampaigns(document.getElementById('botnets'),d.botnet_campaigns);
   renderSources(document.getElementById('sourcesList'),d.sources,d.log_paths,d.ingest_enabled);
+  renderTlsFp(document.getElementById('tlsFpList'),d.tls_fp_shared||[]);
+  renderStorage(document.getElementById('storageList'),d.storage||{});
   updateWorldMap(d.countries);
 }
 

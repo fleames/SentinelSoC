@@ -100,3 +100,7 @@ sources = Counter()               # source label -> total events ingested
 behavior_signal_counts = Counter()
 history_buckets = {}
 history_lock = threading.Lock()
+
+# TLS / JA3 fingerprint correlation
+tls_fp_to_ips = defaultdict(set)   # fingerprint string -> set of IPs that used it
+ip_tls_fp = {}                     # ip -> most recent TLS fingerprint value

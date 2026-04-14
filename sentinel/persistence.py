@@ -550,3 +550,41 @@ def _load_history_buckets():
             b["top_paths"] = Counter({str(k): int(v) for k, v in list(raw.get("top_paths", []))})
             state.history_buckets[ts] = b
         _prune_runtime_state()
+
+
+def get_storage_stats():
+    """Return disk usage breakdown of all Sentinel state files (bytes)."""
+    named_files = {
+        "bans":            config.BAN_LIST_PATH,
+        "audit":           config.AUDIT_LOG_PATH,
+        "parsed_state":    config.PARSED_STATE_PATH,
+        "behavior_state":  config.BEHAVIOR_STATE_PATH,
+        "history_buckets": config.HISTORY_BUCKETS_PATH,
+    }
+    result = {}
+    total = 0
+    for label, path in named_files.items():
+        sz = 0
+        if path:
+            try:
+                sz = os.path.getsize(path)
+            except OSError:
+                sz = 0
+        result[label] = sz
+        total += sz
+
+    events_dir = config.HISTORY_EVENTS_DIR
+    events_sz = 0
+    events_files = 0
+    if events_dir and os.path.isdir(events_dir):
+        for fname in os.listdir(events_dir):
+            try:
+                events_sz += os.path.getsize(os.path.join(events_dir, fname))
+                events_files += 1
+            except OSError:
+                pass
+    result["history_events"] = events_sz
+    result["history_events_files"] = events_files
+    total += events_sz
+    result["total"] = total
+    return result

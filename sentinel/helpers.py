@@ -117,6 +117,18 @@ def _behavior_bonus(ip, ua_key, path):
 
     if path.startswith("/wp-") and "bot" in ua_key:
         bonus += 2
+
+    # Slow-and-low crawler: sustained activity over hours, many unique paths, low per-hour rate.
+    hours_active = win_s / 3600.0
+    if (hours_active >= config.SLOW_LOW_MIN_HOURS
+            and uniq_n >= config.SLOW_LOW_MIN_PATHS):
+        req_per_hour = req_n / hours_active
+        err_rate_b = b["status_4xx"] / max(1, req_n)
+        if 3.0 <= req_per_hour <= 60.0 and err_rate_b < 0.4:
+            bonus += 6
+            state.behavior_signal_counts["slow_and_low"] += 1
+            state.ip_tags[ip].add("slow_and_low")
+
     return bonus
 
 
@@ -180,6 +192,15 @@ def _prune_runtime_state(now=None):
     for ip, uas in state.ip_to_uas.items():
         for u in uas:
             state.ua_to_ips[u].add(ip)
+
+    # Remove TLS fingerprint entries for pruned IPs
+    for ip in list(state.ip_tls_fp.keys()):
+        if ip not in state.ip_behavior:
+            fp_val = state.ip_tls_fp.pop(ip, None)
+            if fp_val:
+                state.tls_fp_to_ips[fp_val].discard(ip)
+                if not state.tls_fp_to_ips[fp_val]:
+                    state.tls_fp_to_ips.pop(fp_val, None)
 
     hist_cutoff_key = _history_bucket_key(now - config.HISTORY_RETENTION_S)
     for k in [k for k in state.history_buckets.keys() if k < hist_cutoff_key]:

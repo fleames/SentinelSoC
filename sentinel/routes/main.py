@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify
 from sentinel import config, state
 from sentinel.botnet import _campaign_for_api
 from sentinel.helpers import threat_level_label
+from sentinel.persistence import get_storage_stats
 
 bp = Blueprint("main", __name__)
 
@@ -96,6 +97,12 @@ def data():
         history_bucket_count = int(len(state.history_buckets))
         history_latest = int(max(state.history_buckets.keys()) if state.history_buckets else 0)
 
+    # TLS fingerprint snapshot (no lock needed for a best-effort read-only snapshot)
+    tls_fp_shared = sorted(
+        [(fp, len(ips)) for fp, ips in state.tls_fp_to_ips.items() if len(ips) >= config.TLS_FP_SHARED_THRESHOLD],
+        key=lambda x: -x[1]
+    )[:20]
+
     # Snapshot botnet campaigns under their own lock (after releasing main lock)
     with state.botnet_lock:
         campaigns_snapshot = [
@@ -167,8 +174,15 @@ def data():
                 "bucket_count": history_bucket_count,
                 "latest_bucket_ts": history_latest,
             },
+            "tls_fp_shared": tls_fp_shared,
+            "storage": get_storage_stats(),
         }
     )
+
+
+@bp.route("/api/storage")
+def api_storage():
+    return jsonify(get_storage_stats())
 
 
 @bp.route("/api/reset", methods=["POST"])

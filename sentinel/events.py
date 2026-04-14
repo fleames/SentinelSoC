@@ -66,6 +66,14 @@ def _process_log_event(data, source=""):
     )
     tls_info = data.get("tls") if isinstance(data.get("tls"), dict) else {}
     tls_cipher_v = str(tls_info.get("cipher_suite", "") or "")
+    tls_version_v = str(tls_info.get("version", "") or "")
+    # Prefer Cloudflare JA3, fall back to cipher+version composite fingerprint.
+    if cf_ja3_v and cf_ja3_v.strip():
+        tls_fp_value = cf_ja3_v.strip()[:64]
+    elif tls_cipher_v:
+        tls_fp_value = "tls:{0}:{1}".format(tls_version_v, tls_cipher_v)
+    else:
+        tls_fp_value = ""
     ua_norm = (ua or "-").strip().lower()[:160]
 
     geo = get_geo(ip)
@@ -132,6 +140,15 @@ def _process_log_event(data, source=""):
         state.fp_last_seen[fp] = ts_epoch
         state.ua_to_ips[ua_norm].add(ip)
         state.ip_to_uas[ip].add(ua_norm)
+
+        # TLS / JA3 fingerprint correlation
+        if tls_fp_value:
+            state.tls_fp_to_ips[tls_fp_value].add(ip)
+            state.ip_tls_fp[ip] = tls_fp_value
+            if len(state.tls_fp_to_ips[tls_fp_value]) >= config.TLS_FP_SHARED_THRESHOLD:
+                state.behavior_signal_counts["shared_tls_fp"] += 1
+                state.ip_tags[ip].add("shared_tls_fp")
+                s += 4
 
         b = state.ip_behavior[ip]
         if not b["first_seen"]:

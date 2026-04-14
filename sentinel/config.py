@@ -108,3 +108,11 @@ else:
 
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."
+
+# TLS/JA3 fingerprint sharing: flag fingerprint when seen across this many distinct IPs.
+TLS_FP_SHARED_THRESHOLD = int(os.environ.get("SENTINEL_TLS_FP_THRESHOLD", "5") or "5")
+
+# Slow-and-low: minimum hours active before the pattern is considered deliberate.
+SLOW_LOW_MIN_HOURS = float(os.environ.get("SENTINEL_SLOW_LOW_MIN_HOURS", "2") or "2")
+# Minimum unique non-static paths visited before flagging.
+SLOW_LOW_MIN_PATHS = int(os.environ.get("SENTINEL_SLOW_LOW_MIN_PATHS", "15") or "15")

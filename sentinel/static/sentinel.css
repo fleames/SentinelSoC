@@ -244,10 +244,24 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 /* Status code dot */
 .sc-dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0;}
 /* Tags */
-.tag{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:1px 5px;border-radius:3px;font-weight:600;flex-shrink:0;font-family:var(--sans);}
-.tag-bot       {background:rgba(12,39,68,0.8);  color:#7dd3fc;border:1px solid rgba(30,73,118,0.6);}
-.tag-crawler   {background:rgba(42,31,61,0.8);  color:#d8b4fe;border:1px solid rgba(76,29,149,0.5);}
-.tag-persistent{background:rgba(60,10,10,0.9);  color:#fca5a5;border:1px solid rgba(185,28,28,0.7);}
+.tag{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:1px 5px;border-radius:3px;font-weight:600;flex-shrink:0;font-family:var(--sans);background:rgba(255,255,255,0.07);color:var(--text-dim);border:1px solid rgba(255,255,255,0.1);}
+/* threat intel / reputation */
+.tag-abuseipdb_high    {background:rgba(127,0,0,0.85);   color:#fca5a5;border:1px solid rgba(220,38,38,0.7);}
+.tag-abuseipdb_medium  {background:rgba(90,20,20,0.85);  color:#fca5a5;border:1px solid rgba(185,28,28,0.5);}
+.tag-reported          {background:rgba(80,30,10,0.85);  color:#fdba74;border:1px solid rgba(194,65,12,0.6);}
+.tag-greynoise_malicious{background:rgba(20,55,0,0.9);   color:#86efac;border:1px solid rgba(22,163,74,0.6);}
+.tag-greynoise_noise   {background:rgba(10,40,10,0.85);  color:#6ee7b7;border:1px solid rgba(16,185,129,0.5);}
+.tag-greynoise_riot    {background:rgba(10,30,50,0.85);  color:#93c5fd;border:1px solid rgba(59,130,246,0.4);}
+.tag-shodan_vulns      {background:rgba(120,30,0,0.9);   color:#fb923c;border:1px solid rgba(234,88,12,0.7);}
+.tag-shodan_open_ports {background:rgba(80,50,10,0.85);  color:#fcd34d;border:1px solid rgba(217,119,6,0.6);}
+/* behaviour signals */
+.tag-slow_and_low      {background:rgba(20,40,60,0.9);   color:#7dd3fc;border:1px solid rgba(56,189,248,0.4);}
+.tag-shared_tls_fp     {background:rgba(50,10,80,0.9);   color:#e879f9;border:1px solid rgba(192,38,211,0.5);}
+.tag-ua_burst          {background:rgba(80,40,0,0.9);    color:#fbbf24;border:1px solid rgba(245,158,11,0.6);}
+/* identity / session */
+.tag-bot               {background:rgba(12,39,68,0.8);   color:#7dd3fc;border:1px solid rgba(30,73,118,0.6);}
+.tag-crawler           {background:rgba(42,31,61,0.8);   color:#d8b4fe;border:1px solid rgba(76,29,149,0.5);}
+.tag-persistent        {background:rgba(60,10,10,0.9);   color:#fca5a5;border:1px solid rgba(185,28,28,0.7);}
 /* Charts */
 .charts-dual{display:grid;grid-template-columns:1fr 190px;gap:12px;}
 @media(max-width:900px){.charts-dual{grid-template-columns:1fr;}}

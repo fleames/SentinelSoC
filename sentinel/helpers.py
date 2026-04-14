@@ -24,6 +24,25 @@ def _normalize_client_ip(s):
         return None
 
 
+def _is_protected_ip(s):
+    """Return True if the IP is private, loopback, link-local, or otherwise
+    not a routable public address that should never be banned."""
+    if not s or not isinstance(s, str):
+        return True
+    try:
+        addr = ipaddress.ip_address(s.strip())
+        return (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        )
+    except ValueError:
+        return False
+
+
 def _ip_subnet(ip):
     """Return /24 (IPv4) or /48 (IPv6) prefix string for subnet-diversity checks."""
     try:

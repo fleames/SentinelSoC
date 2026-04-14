@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
 from sentinel.auth import _audit_actor, _audit_write
-from sentinel.helpers import _normalize_client_ip
+from sentinel.helpers import _normalize_client_ip, _is_protected_ip
 from sentinel.persistence import _iptables_drop, _save_bans
 
 bp = Blueprint("ban", __name__)
@@ -19,6 +19,8 @@ def api_ban():
     nip = _normalize_client_ip(raw)
     if not nip:
         return jsonify({"error": "invalid ip"}), 400
+    if _is_protected_ip(nip):
+        return jsonify({"error": "cannot ban private/local/reserved addresses"}), 400
     with state.lock:
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)

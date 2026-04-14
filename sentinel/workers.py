@@ -93,6 +93,13 @@ def reset_dashboard_state():
         state.history_buckets.clear()
     with state.botnet_lock:
         state.botnet_campaigns.clear()
+    with state.lock:
+        state.tls_fp_to_ips.clear()
+        state.ip_tls_fp.clear()
+        state.ua_burst_window.clear()
+    with state.reputation_lock:
+        state.reputation_queue.clear()
+        state.reputation_seen.clear()
 
 
 def stream(path=None, from_start=None, source_label=None):

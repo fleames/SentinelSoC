@@ -116,6 +116,9 @@ def reset_dashboard_state():
         state.ssh_auth_method_totals.clear()
         state.ssh_ip_wordlist_fp.clear()
         state.ssh_wordlist_campaigns.clear()
+        state.ssh_key_fps.clear()
+        state.ssh_ip_key_fps.clear()
+        state.ssh_key_fp_ips.clear()
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

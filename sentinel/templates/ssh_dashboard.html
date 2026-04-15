@@ -258,6 +258,12 @@
       <div style="max-height:300px;overflow-y:auto" id="campaignsList"></div>
     </div>
 
+    <!-- SSH Public Key Fingerprints (LogLevel VERBOSE) -->
+    <div class="card" id="keyFpCard" style="display:none">
+      <h2>Attacker SSH keys <span class="hint">public key fingerprints &mdash; requires LogLevel VERBOSE</span></h2>
+      <div style="max-height:300px;overflow-y:auto" id="keyFpList"></div>
+    </div>
+
   </div>
 
 </div>
@@ -437,6 +443,23 @@ function renderSshDrill(d, body){
       +'</div>';
   }
 
+  // SSH public key fingerprints (LogLevel VERBOSE)
+  var keyFpHtml='';
+  if(d.key_fps&&d.key_fps.length){
+    keyFpHtml='<div class="drill-section-title">SSH public keys tried ('+d.key_fps.length+')</div>'
+      +d.key_fps.map(function(k){
+        var sharedColor=k.shared_ips>=3?'var(--danger)':k.shared_ips>=2?'var(--warn)':'#818cf8';
+        var parts=k.fp.split(' ');
+        var keyType=parts[0]||'KEY';
+        var keyHash=parts.slice(1).join(' ');
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-family:var(--mono);font-size:11px">'
+          +'<span style="background:rgba(129,140,248,.15);color:#818cf8;border-radius:3px;padding:1px 5px;font-size:9px;flex-shrink:0">'+esc(keyType)+'</span>'
+          +'<span style="flex:1;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(k.fp)+'">'+esc(keyHash)+'</span>'
+          +(k.shared_ips>=2?'<span style="color:'+sharedColor+';font-size:10px;flex-shrink:0">'+k.shared_ips+' IPs</span>':'')
+        +'</div>';
+      }).join('');
+  }
+
   var usersHtml='<div class="drill-section-title">Usernames tried ('+users.length+')</div>';
   if(!users.length){
     usersHtml+='<div style="color:var(--muted);font-family:var(--mono);font-size:11px;padding:8px 0">No username data</div>';
@@ -468,6 +491,7 @@ function renderSshDrill(d, body){
     +(tagHtml?'<div class="drill-section-title">Tags</div><div class="drill-tags">'+tagHtml+'</div>':'')
     +authHtml
     +campHtml
+    +keyFpHtml
     +'<div class="drill-section-title">Timing</div>'
     +'<div class="drill-meta">'
       +'<div>First seen: <span>'+tsLabel(b.first_seen)+'</span></div>'
@@ -683,6 +707,37 @@ function renderCampaigns(campaigns){
   }).join('');
 }
 
+/* ── SSH public key fingerprints ── */
+function renderKeyFps(fps){
+  var card=document.getElementById('keyFpCard');
+  var el=document.getElementById('keyFpList');
+  if(!fps||!fps.length){if(card)card.style.display='none';return;}
+  if(card)card.style.display='';
+  var max=fps[0].attempts||1;
+  el.innerHTML=fps.map(function(k,i){
+    var pct=Math.max(2,Math.round((k.attempts/max)*100));
+    var sharedColor=k.ip_count>=3?'var(--danger)':k.ip_count>=2?'var(--warn)':'var(--muted)';
+    var parts=k.fp.split(' ');
+    var keyType=parts[0]||'';
+    var keyHash=parts.slice(1).join(' ');
+    return '<div class="geo-row" style="flex-direction:column;align-items:flex-start;gap:3px;padding:7px 10px">'
+      +'<div style="display:flex;align-items:center;gap:8px;width:100%">'
+        +'<span style="font-size:9px;background:rgba(129,140,248,.15);color:#818cf8;border-radius:3px;padding:1px 5px;font-family:var(--mono);flex-shrink:0">'+esc(keyType)+'</span>'
+        +'<span style="font-family:var(--mono);font-size:10px;color:#94a3b8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(k.fp)+'">'+esc(keyHash)+'</span>'
+        +'<span style="color:var(--danger);font-weight:700;font-family:var(--mono);font-size:11px;flex-shrink:0">'+fmt(k.attempts)+'</span>'
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:8px;width:100%">'
+        +'<div style="flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">'
+          +'<div style="width:'+pct+'%;height:100%;background:#818cf8;border-radius:2px"></div>'
+        +'</div>'
+        +(k.ip_count>=2
+          ?'<span style="font-size:9px;color:'+sharedColor+';font-family:var(--mono);flex-shrink:0">'+k.ip_count+' IPs share this key</span>'
+          :'<span style="font-size:9px;color:var(--muted);font-family:var(--mono);flex-shrink:0">1 IP</span>')
+      +'</div>'
+    +'</div>';
+  }).join('');
+}
+
 /* ── main render ── */
 function applyData(d){
   updateKpis(d);
@@ -696,6 +751,7 @@ function applyData(d){
   renderSshHistory(d.history||[]);
   renderAuthStrip(d.auth_totals||{});
   renderCampaigns(d.campaigns||[]);
+  renderKeyFps(d.top_key_fps||[]);
   document.getElementById('foot').textContent='Server time: '+(d.server_time||'—');
 }
 

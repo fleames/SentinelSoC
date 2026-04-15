@@ -117,7 +117,8 @@ def _process_log_event(data, source=""):
     })
 
     is_ssh = (source == "ssh")
-    ssh_auth_method = _header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "" if is_ssh else ""
+    ssh_auth_method = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""
+    ssh_key_fp = (_header_first(headers, "X-SSH-Key-Fp", "x-ssh-key-fp") or "") if is_ssh else ""
 
     with state.lock:
         if is_ssh:
@@ -136,6 +137,13 @@ def _process_log_event(data, source=""):
             # Wordlist fingerprint — recompute when a new username is added
             if ssh_user:
                 _update_ssh_wordlist_fp(ip)
+            # SSH public key fingerprint (LogLevel VERBOSE only)
+            if ssh_key_fp:
+                state.ssh_key_fps[ssh_key_fp] += 1
+                state.ssh_ip_key_fps[ip].add(ssh_key_fp)
+                state.ssh_key_fp_ips[ssh_key_fp].add(ip)
+                if len(state.ssh_key_fp_ips[ssh_key_fp]) >= 2:
+                    state.ip_tags[ip].add("shared_ssh_key")
         else:
             state.counters["total"] += 1
             state.counters["current_second"] += 1

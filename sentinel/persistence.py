@@ -311,6 +311,15 @@ def _save_parsed_state():
                 str(fp): sorted(ips)
                 for fp, ips in state.ssh_wordlist_campaigns.items()
             },
+            "ssh_key_fps": list(state.ssh_key_fps.most_common(2000)),
+            "ssh_ip_key_fps": {
+                str(ip): sorted(fps)
+                for ip, fps in state.ssh_ip_key_fps.items()
+            },
+            "ssh_key_fp_ips": {
+                str(fp): sorted(ips)
+                for fp, ips in state.ssh_key_fp_ips.items()
+            },
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -474,6 +483,17 @@ def _load_parsed_state():
         state.ssh_wordlist_campaigns.clear()
         for fp, ips in dict(data.get("ssh_wordlist_campaigns", {})).items():
             state.ssh_wordlist_campaigns[str(fp)] = set(str(ip) for ip in list(ips))
+
+        state.ssh_key_fps.clear()
+        state.ssh_key_fps.update(
+            {str(k): int(v) for k, v in list(data.get("ssh_key_fps", []))}
+        )
+        state.ssh_ip_key_fps.clear()
+        for ip, fps in dict(data.get("ssh_ip_key_fps", {})).items():
+            state.ssh_ip_key_fps[str(ip)] = set(str(f) for f in list(fps))
+        state.ssh_key_fp_ips.clear()
+        for fp, ips in dict(data.get("ssh_key_fp_ips", {})).items():
+            state.ssh_key_fp_ips[str(fp)] = set(str(ip) for ip in list(ips))
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

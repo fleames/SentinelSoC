@@ -66,6 +66,16 @@ def api_ssh_data():
         # Auth method totals
         auth_totals = dict(state.ssh_auth_method_totals)
 
+        # Top SSH public key fingerprints (LogLevel VERBOSE)
+        top_key_fps = []
+        for fp, attempts in state.ssh_key_fps.most_common(20):
+            ip_count = len(state.ssh_key_fp_ips.get(fp, set()))
+            top_key_fps.append({
+                "fp": fp,
+                "attempts": attempts,
+                "ip_count": ip_count,
+            })
+
         # Credential campaigns — clusters of IPs sharing the same wordlist fingerprint
         campaigns = []
         for fp, ips in state.ssh_wordlist_campaigns.items():
@@ -95,6 +105,7 @@ def api_ssh_data():
         "history": history,
         "auth_totals": auth_totals,
         "campaigns": campaigns,
+        "top_key_fps": top_key_fps,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -117,6 +128,7 @@ def api_ssh_ip():
         auth_methods = dict(state.ssh_ip_auth_methods.get(ip, {}))
         wordlist_fp = state.ssh_ip_wordlist_fp.get(ip, "")
         campaign_size = len(state.ssh_wordlist_campaigns.get(wordlist_fp, set())) if wordlist_fp else 0
+        key_fps = sorted(state.ssh_ip_key_fps.get(ip, set()))
 
     users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
     return jsonify({
@@ -131,6 +143,10 @@ def api_ssh_ip():
         "auth_methods": auth_methods,
         "wordlist_fp": wordlist_fp,
         "campaign_size": campaign_size,
+        "key_fps": [
+            {"fp": fp, "shared_ips": len(state.ssh_key_fp_ips.get(fp, set()))}
+            for fp in key_fps
+        ],
         "behavior": {
             "first_seen": b.get("first_seen"),
             "last_seen": b.get("last_seen"),

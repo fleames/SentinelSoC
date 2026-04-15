@@ -48,6 +48,25 @@ SSH_SOURCE      = os.environ.get("SSH_SOURCE", "").strip().lower()  # "journal" 
 # auth_method: "password" | "publickey" | "scanner" | ""
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Patterns — INFO level (always available)
+# ---------------------------------------------------------------------------
+# Returns (ip, user_or_None, auth_method, src_port_or_None, key_fp_or_None)
+# auth_method: "password" | "publickey" | "scanner" | ""
+# key_fp: e.g. "RSA SHA256:abcde..." — only from LogLevel VERBOSE
+
+# VERBOSE: publickey failure WITH key fingerprint (must check before _FAILED_RE)
+_FAILED_PK_FP_RE = re.compile(
+    r"Failed publickey for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?"
+    r"[^\n]*?ssh2:\s*(\S+\s+SHA256:\S+)"
+)
+# VERBOSE: "Postponed publickey" — attacker presenting a key (before final verdict)
+_POSTPONED_PK_RE = re.compile(
+    r"Postponed publickey for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?"
+    r"[^\n]*?ssh2:\s*(\S+\s+SHA256:\S+)"
+)
+
+# INFO: generic Failed password / publickey (no fingerprint)
 _FAILED_RE   = re.compile(r"Failed (password|publickey) for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
 _INVALID_RE  = re.compile(r"Invalid user (\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
 _DISCON_RE   = re.compile(r"Disconnected from (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port (\d+)")
@@ -63,53 +82,64 @@ _RECV_RE     = re.compile(r"Received disconnect from ([\da-fA-F:.]+) port (\d+).
 
 
 def _parse_line(line):
-    """Return (ip, user, auth_method, src_port) or None for non-SSH/non-failure lines."""
+    """Return (ip, user, auth_method, src_port, key_fp) or None."""
     if "sshd" not in line and "ssh" not in line.lower():
         return None
 
+    # VERBOSE: publickey with fingerprint — check before generic _FAILED_RE
+    m = _FAILED_PK_FP_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4)
+
+    # VERBOSE: postponed publickey (key presented but not yet accepted/rejected)
+    m = _POSTPONED_PK_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4)
+
+    # INFO: generic Failed password / publickey
     m = _FAILED_RE.search(line)
     if m:
-        return m.group(3), m.group(2), m.group(1), int(m.group(4)) if m.group(4) else None
+        return m.group(3), m.group(2), m.group(1), int(m.group(4)) if m.group(4) else None, None
 
     m = _INVALID_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None
 
     m = _DISCON_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3))
+        return m.group(2), m.group(1), "password", int(m.group(3)), None
 
     m = _CLOSED_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3))
+        return m.group(2), m.group(1), "password", int(m.group(3)), None
 
     m = _MAXAUTH_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None
 
     m = _KEX_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "scanner", None
+        return m.group(2), m.group(1), "scanner", None, None
 
     m = _NO_IDENT_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
 
     m = _BAD_VER_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
 
     m = _NO_NEG_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
 
     m = _RESET_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
 
     m = _RECV_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2))
+        return m.group(1), None, "scanner", int(m.group(2)), None
 
     return None
 
@@ -118,13 +148,15 @@ def _parse_line(line):
 # Event builder
 # ---------------------------------------------------------------------------
 
-def _make_event(ip, user=None, auth_method="", src_port=None):
+def _make_event(ip, user=None, auth_method="", src_port=None, key_fp=None):
     ua = f"SSH-client/{user}" if user else "SSH-client"
     hdrs = {"User-Agent": [ua]}
     if auth_method:
         hdrs["X-SSH-Auth-Method"] = [auth_method]
     if src_port:
         hdrs["X-SSH-Src-Port"] = [str(src_port)]
+    if key_fp:
+        hdrs["X-SSH-Key-Fp"] = [key_fp[:100]]
     return {
         "msg":       "handled request",
         "ts":        datetime.now(timezone.utc).isoformat(),
@@ -297,8 +329,8 @@ def main():
     for line in _line_source(mode):
         parsed = _parse_line(line)
         if parsed:
-            ip, user, auth_method, src_port = parsed
-            batch.append(_make_event(ip, user, auth_method, src_port))
+            ip, user, auth_method, src_port, key_fp = parsed
+            batch.append(_make_event(ip, user, auth_method, src_port, key_fp))
             if len(batch) >= BATCH_SIZE:
                 _post_batch(batch)
                 batch = []

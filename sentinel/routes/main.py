@@ -279,5 +279,14 @@ def api_reset():
     _save_parsed_state()
     _save_behavior_state()
     _save_history_buckets()
+    # Clear audit log last so the reset entry itself is not preserved
+    if config.AUDIT_LOG_PATH:
+        try:
+            import os
+            with state.audit_lock:
+                with open(config.AUDIT_LOG_PATH, "w", encoding="utf-8"):
+                    pass
+        except OSError:
+            pass
     _audit_write("reset", _audit_actor(), {})
     return jsonify({"ok": True})

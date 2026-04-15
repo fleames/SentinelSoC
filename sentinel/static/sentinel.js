@@ -1276,23 +1276,28 @@ document.getElementById('banList').addEventListener('click',async function(e){
   }catch(err){ alert('Unmute failed'); }
 });
 document.getElementById('btnReset').addEventListener('click',async function(){
-  if(!confirm('Reset all counters, charts, alerts, and geo cache?')) return;
+  if(!confirm('Reset all counters, charts, alerts, audit log, and historical telemetry?')) return;
   try{
     var r=await fetch('/api/reset',{method:'POST',credentials:'same-origin'});
-    if(!r.ok) throw new Error('bad');
+    if(!r.ok) throw new Error('Reset failed (server returned '+r.status+')');
+  }catch(e){ alert(e.message||'Reset failed'); return; }
+  // Server-side reset succeeded — refresh UI best-effort (errors here are non-fatal)
+  try{
     lastPayload=null; setFocus(''); closeModal(); seenAlertKeys.clear();
     rpsHist=[]; atkHist=[];
     comboChart.data.labels=[]; comboChart.data.datasets[0].data=[]; comboChart.data.datasets[1].data=[];
     comboChart.update('none');
     statusDonut.data.datasets[0].data=[0,0,0,0,0]; statusDonut.update('none');
     if(worldMap){try{worldMap.series.regions[0].setValues({});}catch(e){}}
-    historySelectedDay='';
-    historyDaysLoaded=false;
+    historySelectedDay=''; historyDaysLoaded=false; historyPage=1;
     var hsel=document.getElementById('histDaySelect');
     if(hsel) hsel.value='';
-    historyPage=1;
-    setPaused(false); await load(true); await refreshHistory();
-  }catch(e){ alert('Reset failed'); }
+    auditLastCount=0;
+    setPaused(false);
+    await load(true);
+    await refreshHistory();
+    await loadAudit(true);
+  }catch(e){}
 });
 
 document.getElementById('q').addEventListener('input',function(){ if(lastPayload) applyRender(lastPayload); });

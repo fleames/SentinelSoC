@@ -219,6 +219,20 @@ def _prune_history_event_files(now=None):
                 pass
 
 
+def _clear_history_event_files():
+    """Delete ALL history event files. Called on dashboard reset."""
+    if not config.HISTORY_EVENTS_DIR or not os.path.isdir(config.HISTORY_EVENTS_DIR):
+        return
+    with state.history_lock:
+        for name in os.listdir(config.HISTORY_EVENTS_DIR):
+            if not name.endswith(".jsonl"):
+                continue
+            try:
+                os.remove(os.path.join(config.HISTORY_EVENTS_DIR, name))
+            except OSError:
+                pass
+
+
 # ========================
 # PARSED STATE
 # ========================

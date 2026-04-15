@@ -269,9 +269,13 @@ def api_settings_post():
 @bp.route("/api/reset", methods=["POST"])
 def api_reset():
     from sentinel.workers import reset_dashboard_state
-    from sentinel.persistence import _save_parsed_state, _save_behavior_state, _save_history_buckets
+    from sentinel.persistence import (
+        _save_parsed_state, _save_behavior_state,
+        _save_history_buckets, _clear_history_event_files,
+    )
     from sentinel.auth import _audit_write, _audit_actor
     reset_dashboard_state()
+    _clear_history_event_files()
     _save_parsed_state()
     _save_behavior_state()
     _save_history_buckets()

@@ -364,7 +364,9 @@ def _load_parsed_state():
         # Tags derived from runtime-only state (tls_fp_to_ips, ua_burst_window)
         # are not persisted alongside their source data, so strip them on load
         # to avoid stale badges that no longer match the live detection state.
-        _RUNTIME_TAGS = {"shared_tls_fp", "ua_burst"}
+        # flood and multi_host have no persisted backing state (ip_hosts is
+        # not saved), so strip them on load alongside the other runtime tags.
+        _RUNTIME_TAGS = {"shared_tls_fp", "ua_burst", "flood", "multi_host"}
         state.ip_tags.clear()
         for ip, tags in dict(data.get("ip_tags", {})).items():
             cleaned = set(str(t) for t in list(tags)) - _RUNTIME_TAGS

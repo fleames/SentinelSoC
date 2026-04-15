@@ -259,6 +259,16 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .tag-slow_and_low      {background:rgba(20,40,60,0.9);   color:#7dd3fc;border:1px solid rgba(56,189,248,0.4);}
 .tag-shared_tls_fp     {background:rgba(50,10,80,0.9);   color:#e879f9;border:1px solid rgba(192,38,211,0.5);}
 .tag-ua_burst          {background:rgba(80,40,0,0.9);    color:#fbbf24;border:1px solid rgba(245,158,11,0.6);}
+.tag-scanner           {background:rgba(120,10,10,0.9);  color:#fca5a5;border:1px solid rgba(220,38,38,0.6);}
+.tag-bruteforce        {background:rgba(127,0,0,0.95);   color:#fecaca;border:1px solid rgba(239,68,68,0.8);}
+.tag-error_probe       {background:rgba(90,40,0,0.9);    color:#fdba74;border:1px solid rgba(234,88,12,0.6);}
+.tag-shared_ua         {background:rgba(60,30,80,0.9);   color:#d8b4fe;border:1px solid rgba(139,92,246,0.5);}
+.tag-ua_rotation       {background:rgba(70,50,0,0.9);    color:#fde68a;border:1px solid rgba(217,119,6,0.6);}
+.tag-server_error_probe{background:rgba(80,20,60,0.9);   color:#f0abfc;border:1px solid rgba(192,38,211,0.5);}
+.tag-flood             {background:rgba(140,0,0,1.0);    color:#fff;   border:1px solid rgba(239,68,68,0.9);}
+.tag-headless          {background:rgba(15,30,55,0.95);  color:#93c5fd;border:1px solid rgba(59,130,246,0.5);}
+.tag-multi_host        {background:rgba(20,50,40,0.9);   color:#6ee7b7;border:1px solid rgba(16,185,129,0.5);}
+.tag-empty_ua          {background:rgba(30,30,30,0.9);   color:#9ca3af;border:1px solid rgba(107,114,128,0.5);}
 /* identity / session */
 .tag-bot               {background:rgba(12,39,68,0.8);   color:#7dd3fc;border:1px solid rgba(30,73,118,0.6);}
 .tag-crawler           {background:rgba(42,31,61,0.8);   color:#d8b4fe;border:1px solid rgba(76,29,149,0.5);}

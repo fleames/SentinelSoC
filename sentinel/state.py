@@ -38,6 +38,7 @@ ip_scores = defaultdict(int)
 ip_geo = {}
 ip_paths = defaultdict(Counter)
 ip_tags = defaultdict(set)
+ip_hosts = defaultdict(set)   # ip -> set of virtual hosts seen
 asn_ips = defaultdict(set)
 
 rps_timeline = []
@@ -88,6 +89,7 @@ ip_behavior = defaultdict(
         "admin_hits": 0,
         "ua_switches": 0,
         "last_ua": "",
+        "no_ref_hits": 0,
     }
 )
 ip_recent_paths = defaultdict(lambda: deque(maxlen=4))

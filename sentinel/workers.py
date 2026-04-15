@@ -97,6 +97,7 @@ def reset_dashboard_state():
         state.tls_fp_to_ips.clear()
         state.ip_tls_fp.clear()
         state.ua_burst_window.clear()
+        state.ip_hosts.clear()
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

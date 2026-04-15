@@ -134,6 +134,7 @@ def _process_log_event(data, source=""):
 
         state.ip_geo[ip] = resolved if resolved is not None else geo
         state.ip_paths[ip][uri] += 1
+        state.ip_hosts[ip].add(host)
         for tg in _ua_tags(ua):
             state.ip_tags[ip].add(tg)
 
@@ -186,6 +187,8 @@ def _process_log_event(data, source=""):
         if b["last_ua"] and b["last_ua"] != ua_norm:
             b["ua_switches"] += 1
         b["last_ua"] = ua_norm
+        if ref == "-":
+            b["no_ref_hits"] = b.get("no_ref_hits", 0) + 1
 
         state.ip_recent_paths[ip].append(path_bucket)
         b_bonus = _behavior_bonus(ip, ua_norm, path_bucket)

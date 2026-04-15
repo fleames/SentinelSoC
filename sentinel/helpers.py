@@ -129,27 +129,71 @@ def _behavior_bonus(ip, ua_key, path):
     req_n = b["req_count"]
     bonus = 0
 
+    # -- Group 1: existing signals, now also tag the IP --
+
     if uniq_n >= 20 and req_n <= 60 and win_s <= 180:
         bonus += 8
         state.behavior_signal_counts["scanner"] += 1
+        state.ip_tags[ip].add("scanner")
+
     login_pressure = b["login_hits"] + b["wp_login_hits"] + b["admin_hits"]
     if login_pressure >= 8 and win_s <= 240:
         bonus += 6
         state.behavior_signal_counts["bruteforce"] += 1
+        state.ip_tags[ip].add("bruteforce")
+
     if req_n >= 15 and b["status_4xx"] / max(1, req_n) >= 0.6:
         bonus += 5
         state.behavior_signal_counts["error_probe"] += 1
+        state.ip_tags[ip].add("error_probe")
 
     ua_spread = len(state.ua_to_ips.get(ua_key, ()))
     if ua_key and ua_key != "-" and ua_spread >= 8:
         bonus += 4
         state.behavior_signal_counts["shared_ua_many_ips"] += 1
+        state.ip_tags[ip].add("shared_ua")
+
     if b["ua_switches"] >= 6 and req_n <= 80 and win_s <= 300:
         bonus += 5
         state.behavior_signal_counts["ip_ua_rotation"] += 1
+        state.ip_tags[ip].add("ua_rotation")
 
     if path.startswith("/wp-") and "bot" in ua_key:
         bonus += 2
+
+    # -- Group 2: new signals from existing state --
+
+    # Server error probe: repeated 5xx responses suggest backend vulnerability scanning.
+    if req_n >= 10 and b["status_5xx"] / max(1, req_n) >= 0.3:
+        bonus += 4
+        state.behavior_signal_counts["server_error_probe"] += 1
+        state.ip_tags[ip].add("server_error_probe")
+
+    # Flood: very high request rate in a short burst window.
+    if req_n >= 200 and win_s <= 60:
+        bonus += 6
+        state.behavior_signal_counts["flood"] += 1
+        state.ip_tags[ip].add("flood")
+
+    # Headless automation: majority of requests carry no Referer header.
+    no_ref = b.get("no_ref_hits", 0)
+    if req_n >= 30 and no_ref / max(1, req_n) >= 0.7:
+        bonus += 3
+        state.behavior_signal_counts["headless"] += 1
+        state.ip_tags[ip].add("headless")
+
+    # Multi-host scan: same IP probing several distinct virtual hosts.
+    host_count = len(state.ip_hosts.get(ip, ()))
+    if host_count >= 4:
+        bonus += 5
+        state.behavior_signal_counts["multi_host"] += 1
+        state.ip_tags[ip].add("multi_host")
+
+    # Empty UA: consistently no user-agent string.
+    if req_n >= 10 and (not ua_key or ua_key == "-"):
+        bonus += 2
+        state.behavior_signal_counts["empty_ua"] += 1
+        state.ip_tags[ip].add("empty_ua")
 
     # Slow-and-low crawler: sustained activity over hours, many unique paths, low per-hour rate.
     hours_active = win_s / 3600.0
@@ -217,6 +261,7 @@ def _prune_runtime_state(now=None):
             state.ip_recent_paths.pop(ip, None)
             state.ip_to_uas.pop(ip, None)
             state.ip_days_seen.pop(ip, None)
+            state.ip_hosts.pop(ip, None)
         elif ip in state.ip_days_seen:
             state.ip_days_seen[ip] = {d for d in state.ip_days_seen[ip] if d >= cutoff_day}
 

@@ -4,7 +4,7 @@ sentinel/routes/ssh.py -- SSH attack dashboard page and data endpoint.
 """
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
 
 from sentinel import config, state
 
@@ -75,4 +75,39 @@ def api_ssh_data():
         "alerts": alerts,
         "history": history,
         "server_time": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@bp.route("/api/ssh/ip")
+def api_ssh_ip():
+    ip = request.args.get("ip", "").strip()
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+    with state.lock:
+        hits = state.ssh_ips.get(ip, 0)
+        score = state.ip_scores.get(ip, 0)
+        g = state.ip_geo.get(ip, {})
+        if not isinstance(g, dict):
+            g = {}
+        user_counts = dict(state.ssh_ip_users.get(ip, {}))
+        tags = sorted(state.ip_tags.get(ip, ()))
+        b = dict(state.ip_behavior.get(ip, {}))
+        days_seen = sorted(state.ip_days_seen.get(ip, set()))
+
+    users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
+    return jsonify({
+        "ip": ip,
+        "hits": hits,
+        "score": score,
+        "country": g.get("country", "?"),
+        "asn": (g.get("asn") or "")[:120],
+        "tags": tags,
+        "users": [{"user": u, "attempts": n} for u, n in users_sorted],
+        "unique_users": len(users_sorted),
+        "behavior": {
+            "first_seen": b.get("first_seen"),
+            "last_seen": b.get("last_seen"),
+            "req_count": b.get("req_count", 0),
+        },
+        "days_seen": days_seen,
     })

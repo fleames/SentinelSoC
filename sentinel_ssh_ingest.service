@@ -24,11 +24,7 @@ ExecStart=/usr/bin/python3 /opt/sentinel/sentinel_ssh_ingest.py
 Restart=on-failure
 RestartSec=10
 
-# Run as a low-privilege user that can read auth.log.
-# On most distros auth.log is readable by the 'adm' group:
-#   usermod -aG adm sentinel
-User=sentinel
-Group=adm
+User=root
 
 StandardOutput=journal
 StandardError=journal

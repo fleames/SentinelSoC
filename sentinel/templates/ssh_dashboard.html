@@ -60,6 +60,38 @@
 
 /* No-data state */
 .ssh-empty{color:var(--muted);font-family:var(--mono);font-size:11px;padding:20px 14px;text-align:center;}
+
+/* Drill-down modal */
+.ssh-modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center;}
+.ssh-modal-bg.open{display:flex;}
+.ssh-modal{background:var(--card);border:1px solid rgba(255,255,255,.1);border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.8);width:min(680px,94vw);max-height:82vh;overflow-y:auto;padding:0;}
+.ssh-modal-hd{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;border-radius:12px 12px 0 0;}
+.ssh-modal-hd h3{margin:0;font-size:14px;color:var(--text);font-weight:600;}
+.ssh-modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;}
+.ssh-modal-close:hover{background:rgba(255,255,255,.06);color:var(--text);}
+.ssh-modal-body{padding:18px 20px;}
+
+/* Drill sections */
+.drill-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+.drill-stat{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:10px 14px;text-align:center;}
+.drill-stat.danger{border-color:rgba(255,51,68,.25);background:rgba(255,51,68,.06);}
+.drill-stat.warn{border-color:rgba(255,170,0,.25);background:rgba(255,170,0,.06);}
+.drill-stat .ds-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;}
+.drill-stat .ds-val{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--text);}
+.drill-stat.danger .ds-val{color:var(--danger);}
+.drill-stat.warn .ds-val{color:var(--warn);}
+.drill-section-title{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:14px 0 6px;font-weight:600;}
+.drill-user-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-family:var(--mono);font-size:11px;}
+.drill-user-name{flex:1;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.drill-user-name.top1{color:#fbbf24;font-weight:700;}
+.drill-user-bar-track{width:90px;flex-shrink:0;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;}
+.drill-user-bar{height:100%;background:linear-gradient(90deg,var(--danger),#ff6b6b);border-radius:3px;}
+.drill-user-count{color:var(--danger);font-weight:700;min-width:44px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
+.drill-meta{font-size:10px;color:var(--muted);font-family:var(--mono);display:flex;flex-direction:column;gap:3px;}
+.drill-meta span{color:var(--text-dim);}
+.drill-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.drill-ip-clickable{cursor:pointer;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
+.drill-ip-clickable:hover{color:#fff;}
 </style>
 </head>
 <body>
@@ -193,6 +225,19 @@
 
 </div>
 
+<!-- SSH IP Drill-down Modal -->
+<div class="ssh-modal-bg" id="sshDrillBg">
+  <div class="ssh-modal" id="sshDrillModal">
+    <div class="ssh-modal-hd">
+      <h3 id="sshDrillTitle">IP Detail</h3>
+      <button class="ssh-modal-close" id="sshDrillClose" title="Close">&times;</button>
+    </div>
+    <div class="ssh-modal-body" id="sshDrillBody">
+      <div style="color:var(--muted);font-family:var(--mono);font-size:11px;text-align:center;padding:24px 0">Loading...</div>
+    </div>
+  </div>
+</div>
+
 <footer id="foot">Server time &mdash;</footer>
 
 <script>
@@ -285,6 +330,79 @@ function updateKpis(d){
   }
 }
 
+/* ── IP drill-down ── */
+function openSshDrill(ip){
+  var bg=document.getElementById('sshDrillBg');
+  var title=document.getElementById('sshDrillTitle');
+  var body=document.getElementById('sshDrillBody');
+  title.textContent=ip;
+  body.innerHTML='<div style="color:var(--muted);font-family:var(--mono);font-size:11px;text-align:center;padding:24px 0">Loading...</div>';
+  bg.classList.add('open');
+  fetch('/api/ssh/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'})
+    .then(function(r){return r.json();})
+    .then(function(d){renderSshDrill(d,body);})
+    .catch(function(){body.innerHTML='<div style="color:var(--danger);font-family:var(--mono);font-size:11px;text-align:center;padding:24px 0">Failed to load data</div>';});
+}
+
+function renderSshDrill(d, body){
+  var f=flag(d.country||'')||'';
+  var users=d.users||[];
+  var maxU=users.length?users[0].attempts:1;
+  var tags=d.tags||[];
+  var b=d.behavior||{};
+
+  function tsLabel(epoch){
+    if(!epoch) return '—';
+    return new Date(epoch*1000).toISOString().replace('T',' ').slice(0,19)+' UTC';
+  }
+
+  var tagHtml=tags.map(function(t){return '<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>';}).join('');
+  var daysHtml='';
+  if(d.days_seen&&d.days_seen.length){
+    daysHtml='<div class="drill-section-title">Days active ('+d.days_seen.length+')</div>'
+      +'<div style="font-family:var(--mono);font-size:10px;color:var(--muted);display:flex;flex-wrap:wrap;gap:5px">'
+      +d.days_seen.map(function(day){return '<span style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;padding:1px 7px">'+esc(day)+'</span>';}).join('')
+      +'</div>';
+  }
+
+  var usersHtml='<div class="drill-section-title">Usernames tried ('+users.length+')</div>';
+  if(!users.length){
+    usersHtml+='<div style="color:var(--muted);font-family:var(--mono);font-size:11px;padding:8px 0">No username data</div>';
+  } else {
+    usersHtml+=users.map(function(u,i){
+      var pct=Math.max(2,Math.round((u.attempts/maxU)*100));
+      return '<div class="drill-user-row">'
+        +'<span class="drill-user-name'+(i===0?' top1':'')+'" title="'+esc(u.user)+'">'+esc(u.user)+'</span>'
+        +'<div class="drill-user-bar-track"><div class="drill-user-bar" style="width:'+pct+'%"></div></div>'
+        +'<span class="drill-user-count">'+fmt(u.attempts)+'</span>'
+        +'</div>';
+    }).join('');
+  }
+
+  body.innerHTML=
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">'
+      +(f?'<span style="font-size:36px">'+f+'</span>':'')
+      +'<div>'
+        +'<div style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--danger)">'+esc(d.ip)+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(d.country||'?')+' &mdash; '+esc((d.asn||'Unknown ASN').slice(0,80))+'</div>'
+      +'</div>'
+    +'</div>'
+    +'<div class="drill-grid">'
+      +'<div class="drill-stat danger"><div class="ds-label">SSH Failures</div><div class="ds-val">'+fmt(d.hits)+'</div></div>'
+      +'<div class="drill-stat warn"><div class="ds-label">Threat Score</div><div class="ds-val">'+fmt(d.score)+'</div></div>'
+      +'<div class="drill-stat"><div class="ds-label">Unique Usernames</div><div class="ds-val">'+fmt(d.unique_users)+'</div></div>'
+      +'<div class="drill-stat"><div class="ds-label">Days Active</div><div class="ds-val">'+(d.days_seen?d.days_seen.length:0)+'</div></div>'
+    +'</div>'
+    +(tagHtml?'<div class="drill-section-title">Tags</div><div class="drill-tags">'+tagHtml+'</div>':'')
+    +'<div class="drill-section-title">Timing</div>'
+    +'<div class="drill-meta">'
+      +'<div>First seen: <span>'+tsLabel(b.first_seen)+'</span></div>'
+      +'<div>Last seen: <span>'+tsLabel(b.last_seen)+'</span></div>'
+    +'</div>'
+    +daysHtml
+    +usersHtml;
+}
+
 /* ── IP table ── */
 function renderIpTable(rows){
   var el=document.getElementById('ipTable');
@@ -294,19 +412,19 @@ function renderIpTable(rows){
     if(hint) hint.textContent='';
     return;
   }
-  if(hint) hint.textContent='top '+rows.length+' by hit count';
+  if(hint) hint.textContent='top '+rows.length+' by hit count — click row to drill down';
   var absMax=Math.max.apply(null,rows.map(function(r){return r.score||0;}).concat([1]));
   el.innerHTML=rows.map(function(r,i){
     var f=flag(r.country||'')||esc(r.country||'?');
     var allTags=r.tags||[];
     var tp=allTags.slice(0,3).map(function(t){return '<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>';}).join('');
-    if(allTags.length>3) tp+='<span class="tag" style="opacity:.5">+'+( allTags.length-3)+'</span>';
+    if(allTags.length>3) tp+='<span class="tag" style="opacity:.5">+'+(allTags.length-3)+'</span>';
     var userHtml=r.top_user
       ?('<span class="user-pill" title="tried '+fmt(r.top_user_hits)+' times">'+esc(r.top_user)+'</span>')
       :'<span style="color:var(--muted)">—</span>';
     var pct=Math.max(3,Math.round(((r.score||0)/absMax)*100));
     var barColor=r.score>=50?'var(--danger)':r.score>=15?'#ea580c':'var(--warn)';
-    return '<div class="ssh-th-row'+(i===0?' rank1':'')+'" title="'+esc((r.asn||'')+(allTags.length?' | '+allTags.join(', '):''))+'">'
+    return '<div class="ssh-th-row'+(i===0?' rank1':'')+'" data-ip="'+esc(r.ip)+'" title="Click to drill down">'
       +'<span class="rank'+(i===0?' r1':'')+'">'+(i+1)+'</span>'
       +'<span class="ip">'+esc(r.ip)+'</span>'
       +'<span class="cc" title="'+esc(r.country||'?')+'">'+f+'</span>'
@@ -317,6 +435,10 @@ function renderIpTable(rows){
       +'<span class="th-tags">'+tp+'</span>'
       +'</div>';
   }).join('');
+  // Attach click handlers
+  el.querySelectorAll('.ssh-th-row[data-ip]').forEach(function(row){
+    row.addEventListener('click',function(){openSshDrill(row.dataset.ip);});
+  });
 }
 
 /* ── top attacker sidebar detail ── */
@@ -333,7 +455,7 @@ function renderTopAttacker(rows){
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
       +'<span style="font-size:32px">'+f+'</span>'
       +'<div>'
-        +'<div style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--danger)">'+esc(r.ip)+'</div>'
+        +'<div class="drill-ip-clickable" onclick="openSshDrill(\''+esc(r.ip)+'\')" style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--danger)">'+esc(r.ip)+'</div>'
         +'<div style="font-size:10px;color:var(--muted);margin-top:2px">'+esc(r.country||'?')+' &mdash; '+esc((r.asn||'Unknown').slice(0,60))+'</div>'
       +'</div>'
     +'</div>'
@@ -427,7 +549,7 @@ function renderSshAlerts(alerts){
     return '<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:3px;cursor:default">'
       +'<div style="display:flex;width:100%;align-items:center;gap:6px">'
         +'<span style="color:var(--muted);font-size:10px;flex-shrink:0">'+esc(a.ts)+'</span>'
-        +'<span style="color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:600">'+esc(a.ip)+'</span>'
+        +'<span class="drill-ip-clickable" onclick="openSshDrill(\''+esc(a.ip)+'\')" style="font-family:var(--mono);font-size:11px;font-weight:600">'+esc(a.ip)+'</span>'
         +'<span>'+f+'</span>'
         +'<span class="'+scoreCls+'" style="margin-left:auto">+'+a.score+'</span>'
       +'</div>'
@@ -451,7 +573,7 @@ function renderSshHistory(rows){
     var f=flag(r.country||'')||esc(r.country||'?');
     return '<tr>'
       +'<td style="padding:4px 8px;color:var(--muted)">'+esc(r.ts)+'</td>'
-      +'<td style="padding:4px 8px;color:var(--accent);font-weight:600">'+esc(r.ip)+'</td>'
+      +'<td style="padding:4px 8px"><span class="drill-ip-clickable" onclick="openSshDrill(\''+esc(r.ip)+'\')">'+esc(r.ip)+'</span></td>'
       +'<td style="padding:4px 8px">'+(user==='—'?'<span style="color:var(--muted)">—</span>':'<span class="user-pill">'+esc(user)+'</span>')+'</td>'
       +'<td style="padding:4px 8px;text-align:center">'+f+'</td>'
       +'<td style="padding:4px 8px;text-align:right;color:'+scoreColor+';font-weight:700">'+r.score+'</td>'
@@ -504,6 +626,17 @@ document.addEventListener('DOMContentLoaded',function(){
   setInterval(function(){
     document.getElementById('updatedAgo').textContent=timeAgoStr(lastLoad);
   },1000);
+
+  // Modal close handlers
+  document.getElementById('sshDrillClose').addEventListener('click',function(){
+    document.getElementById('sshDrillBg').classList.remove('open');
+  });
+  document.getElementById('sshDrillBg').addEventListener('click',function(e){
+    if(e.target===this) this.classList.remove('open');
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape') document.getElementById('sshDrillBg').classList.remove('open');
+  });
 });
 </script>
 </body>

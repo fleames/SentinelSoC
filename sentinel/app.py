@@ -15,6 +15,7 @@ from sentinel.routes import (
     ingest_bp,
     ip_bp,
     main_bp,
+    ssh_bp,
     ui_bp,
 )
 
@@ -41,6 +42,7 @@ def create_app():
     app.register_blueprint(ip_bp)
     app.register_blueprint(history_bp)
     app.register_blueprint(ingest_bp)
+    app.register_blueprint(ssh_bp)
     app.register_blueprint(ui_bp)
 
     return app

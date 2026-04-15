@@ -103,6 +103,12 @@ def _process_log_event(data, source=""):
         if is_ssh:
             state.ssh_total += 1
             state.ssh_ips[ip] += 1
+            state.counters["ssh_current_second"] = state.counters.get("ssh_current_second", 0) + 1
+            # Extract username from synthetic UA: SSH-client/<username>
+            ssh_user = ua[len("SSH-client/"):].strip() if ua.startswith("SSH-client/") else ""
+            if ssh_user:
+                state.ssh_usernames[ssh_user] += 1
+                state.ssh_ip_users[ip][ssh_user] += 1
         else:
             state.counters["total"] += 1
             state.counters["current_second"] += 1
@@ -133,10 +139,16 @@ def _process_log_event(data, source=""):
         if asn_u == config.PLACEHOLDER_ASN:
             state.pending_geo_hits[ip] += 1
         else:
-            state.asn_counts[asn_u] += 1
-            state.asn_ips[asn_u].add(ip)
+            if not is_ssh:
+                state.asn_counts[asn_u] += 1
+                state.asn_ips[asn_u].add(ip)
+            else:
+                state.ssh_asns[asn_u] += 1
         if country_u and country_u != config.PLACEHOLDER_CC:
-            state.countries[country_u] += 1
+            if not is_ssh:
+                state.countries[country_u] += 1
+            else:
+                state.ssh_countries[country_u] += 1
 
         state.ip_geo[ip] = resolved if resolved is not None else geo
         state.ip_paths[ip][uri] += 1

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sentinel | SSH Attacks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/sentinel.css"/>
+<style>
+.ssh-kpi-row{display:flex;gap:12px;flex-wrap:wrap;padding:12px 16px 0}
+.ssh-kpi{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px;flex:1}
+.ssh-kpi .label{font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.ssh-kpi .val{font-size:28px;font-weight:700;font-family:var(--mono);color:#f1f5f9}
+.ssh-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px}
+@media(max-width:900px){.ssh-grid{grid-template-columns:1fr}}
+.ssh-card{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.ssh-card h2{font-size:13px;font-weight:600;padding:12px 14px 10px;margin:0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.ssh-card h2 .hint{font-size:11px;font-weight:400;color:var(--muted);font-family:var(--mono)}
+.ssh-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+.ssh-table th{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:500;position:sticky;top:0;background:var(--card)}
+.ssh-table th.r{text-align:right}
+.ssh-table td{padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+.ssh-table td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ssh-table tr:last-child td{border-bottom:none}
+.ssh-table tr:hover td{background:rgba(255,255,255,.03)}
+.ssh-scroll{max-height:420px;overflow-y:auto}
+.ssh-tag{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;margin:1px;background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)}
+.user-bar-wrap{display:flex;align-items:center;gap:6px}
+.user-bar-track{flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;min-width:60px}
+.user-bar{height:100%;background:#dc2626;border-radius:3px;transition:width .3s}
+.user-count{font-variant-numeric:tabular-nums;color:var(--muted);min-width:40px;text-align:right}
+.country-row{display:flex;align-items:center;gap:8px;padding:5px 14px;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--mono);font-size:12px}
+.country-row:last-child{border-bottom:none}
+.country-bar-track{flex:1;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden}
+.country-bar{height:100%;background:#dc2626;border-radius:4px}
+.country-flag{font-size:16px;width:24px;text-align:center}
+.country-name{min-width:36px;color:var(--muted)}
+.country-hits{min-width:50px;text-align:right;font-variant-numeric:tabular-nums}
+.chart-wrap{padding:12px 14px;height:140px;position:relative}
+.no-data{color:var(--muted);font-family:var(--mono);font-size:12px;padding:24px 14px;text-align:center}
+.ip-user-pill{display:inline-block;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25);border-radius:4px;font-size:10px;padding:1px 6px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.rank1-row td:first-child{color:#fbbf24}
+.score-pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;font-variant-numeric:tabular-nums}
+.score-hi{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)}
+.score-med{background:rgba(234,88,12,.15);color:#fb923c;border:1px solid rgba(234,88,12,.3)}
+.score-lo{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)}
+</style>
+</head>
+<body>
+
+<div id="postureStrip" style="height:4px;background:linear-gradient(90deg,#dc2626,#7f1d1d)"></div>
+
+<header>
+  <div class="brand">
+    <div id="liveDot" class="live-dot"></div>
+    <div>
+      <div class="brand-logo">SENTINEL</div>
+      <div class="brand-sub">SSH Attack Intelligence &mdash; <span id="updatedAgo">connecting...</span></div>
+    </div>
+  </div>
+</header>
+
+<nav class="dash-nav">
+  <a class="dash-nav-link" href="/">HTTP Traffic</a>
+  <a class="dash-nav-link active" href="/ssh">SSH Attacks</a>
+</nav>
+
+<div class="ssh-kpi-row">
+  <div class="ssh-kpi">
+    <div class="label">Total auth failures</div>
+    <div class="val" id="kpiTotal">0</div>
+  </div>
+  <div class="ssh-kpi">
+    <div class="label">Unique attacker IPs</div>
+    <div class="val" id="kpiIps">0</div>
+  </div>
+  <div class="ssh-kpi">
+    <div class="label">Unique usernames tried</div>
+    <div class="val" id="kpiUsers">0</div>
+  </div>
+  <div class="ssh-kpi" id="kpiTopIpBox">
+    <div class="label">Most active attacker</div>
+    <div class="val" style="font-size:16px" id="kpiTopIp">&mdash;</div>
+  </div>
+</div>
+
+<div style="padding:12px 16px 0">
+  <div class="ssh-card">
+    <h2>Attack rate <span class="hint">SSH auth failures per second &mdash; last 3 min</span></h2>
+    <div class="chart-wrap"><canvas id="timelineChart"></canvas></div>
+  </div>
+</div>
+
+<div class="ssh-grid">
+
+  <div class="ssh-card" style="grid-column:1/-1">
+    <h2>Top attacking IPs <span class="hint" id="ipHint"></span></h2>
+    <div class="ssh-scroll">
+      <table class="ssh-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>IP Address</th>
+            <th>CC</th>
+            <th>Top username tried</th>
+            <th class="r">Unique users</th>
+            <th class="r">Hits</th>
+            <th class="r">Score</th>
+            <th>Tags</th>
+          </tr>
+        </thead>
+        <tbody id="ipTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="ssh-card">
+    <h2>Most tried usernames <span class="hint">credential stuffing wordlist intelligence</span></h2>
+    <div class="ssh-scroll" id="userList"></div>
+  </div>
+
+  <div class="ssh-card">
+    <h2>Attack origin countries</h2>
+    <div class="ssh-scroll" id="countryList"></div>
+  </div>
+
+  <div class="ssh-card">
+    <h2>Top attacking ASNs <span class="hint">hosting providers &amp; botnets</span></h2>
+    <div class="ssh-scroll">
+      <table class="ssh-table">
+        <thead><tr><th>#</th><th>ASN / Network</th><th class="r">Hits</th></tr></thead>
+        <tbody id="asnTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<footer id="foot">Server time &mdash;</footer>
+
+<script>
+'use strict';
+var CC_FLAGS={AF:'🇦🇫',AL:'🇦🇱',DZ:'🇩🇿',AO:'🇦🇴',AR:'🇦🇷',AM:'🇦🇲',AU:'🇦🇺',AT:'🇦🇹',AZ:'🇦🇿',
+BD:'🇧🇩',BE:'🇧🇪',BJ:'🇧🇯',BO:'🇧🇴',BR:'🇧🇷',BG:'🇧🇬',KH:'🇰🇭',CM:'🇨🇲',CA:'🇨🇦',CL:'🇨🇱',
+CN:'🇨🇳',CO:'🇨🇴',CD:'🇨🇩',CR:'🇨🇷',HR:'🇭🇷',CU:'🇨🇺',CZ:'🇨🇿',DK:'🇩🇰',DO:'🇩🇴',EC:'🇪🇨',
+EG:'🇪🇬',SV:'🇸🇻',ET:'🇪🇹',FI:'🇫🇮',FR:'🇫🇷',GE:'🇬🇪',DE:'🇩🇪',GH:'🇬🇭',GR:'🇬🇷',GT:'🇬🇹',
+HN:'🇭🇳',HK:'🇭🇰',HU:'🇭🇺',IN:'🇮🇳',ID:'🇮🇩',IR:'🇮🇷',IQ:'🇮🇶',IE:'🇮🇪',IL:'🇮🇱',IT:'🇮🇹',
+JP:'🇯🇵',JO:'🇯🇴',KZ:'🇰🇿',KE:'🇰🇪',KP:'🇰🇵',KR:'🇰🇷',KW:'🇰🇼',LB:'🇱🇧',LY:'🇱🇾',LT:'🇱🇹',
+MX:'🇲🇽',MA:'🇲🇦',MD:'🇲🇩',MN:'🇲🇳',MM:'🇲🇲',NP:'🇳🇵',NL:'🇳🇱',NZ:'🇳🇿',NG:'🇳🇬',NO:'🇳🇴',
+PK:'🇵🇰',PA:'🇵🇦',PE:'🇵🇪',PH:'🇵🇭',PL:'🇵🇱',PT:'🇵🇹',QA:'🇶🇦',RO:'🇷🇴',RU:'🇷🇺',SA:'🇸🇦',
+SN:'🇸🇳',RS:'🇷🇸',SG:'🇸🇬',ZA:'🇿🇦',ES:'🇪🇸',LK:'🇱🇰',SD:'🇸🇩',SE:'🇸🇪',CH:'🇨🇭',SY:'🇸🇾',
+TW:'🇹🇼',TZ:'🇹🇿',TH:'🇹🇭',TN:'🇹🇳',TR:'🇹🇷',UG:'🇺🇬',UA:'🇺🇦',AE:'🇦🇪',GB:'🇬🇧',US:'🇺🇸',
+UZ:'🇺🇿',VE:'🇻🇪',VN:'🇻🇳',YE:'🇾🇪',ZW:'🇿🇼'};
+
+function ccFlag(cc){return CC_FLAGS[cc]||'';}
+function esc(s){var d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML;}
+function fmt(n){return Number(n||0).toLocaleString();}
+
+var tlChart=null;
+function initChart(){
+  var ctx=document.getElementById('timelineChart').getContext('2d');
+  tlChart=new Chart(ctx,{
+    type:'line',
+    data:{labels:[],datasets:[{
+      label:'Auth failures/s',
+      data:[],
+      borderColor:'#dc2626',
+      backgroundColor:'rgba(220,38,38,0.15)',
+      borderWidth:2,
+      fill:true,
+      tension:0.3,
+      pointRadius:0,
+    }]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      animation:{duration:300},
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{display:false},
+        y:{beginAtZero:true,ticks:{color:'#64748b',font:{family:'JetBrains Mono',size:10}},grid:{color:'rgba(255,255,255,.05)'}},
+      },
+    }
+  });
+}
+
+function updateChart(tl){
+  if(!tlChart) return;
+  var n=tl.length;
+  tlChart.data.labels=tl.map(function(_,i){return i-n+1+'s';});
+  tlChart.data.datasets[0].data=tl;
+  tlChart.update('none');
+}
+
+function renderIpTable(rows){
+  var tbody=document.getElementById('ipTable');
+  var hint=document.getElementById('ipHint');
+  if(!rows||!rows.length){
+    tbody.innerHTML='<tr><td colspan="8" class="no-data">No SSH attackers recorded yet</td></tr>';
+    if(hint) hint.textContent='';
+    return;
+  }
+  if(hint) hint.textContent='top '+rows.length+' by hit count';
+  tbody.innerHTML=rows.map(function(r,i){
+    var flag=ccFlag(r.country||'')||esc(r.country||'?');
+    var tags=(r.tags||[]).slice(0,3).map(function(t){return '<span class="ssh-tag">'+esc(t)+'</span>';}).join('');
+    var scoreCls=r.score>=50?'score-hi':r.score>=15?'score-med':'score-lo';
+    var userPill=r.top_user?('<span class="ip-user-pill" title="tried '+fmt(r.top_user_hits)+' times">'+esc(r.top_user)+'</span>'):'<span style="color:var(--muted)">—</span>';
+    return '<tr class="'+(i===0?'rank1-row':'')+'">'
+      +'<td>'+(i+1)+'</td>'
+      +'<td style="font-weight:600;color:#f1f5f9">'+esc(r.ip)+'</td>'
+      +'<td title="'+esc(r.country||'?')+'">'+flag+'</td>'
+      +'<td>'+userPill+'</td>'
+      +'<td class="r">'+fmt(r.unique_users)+'</td>'
+      +'<td class="r" style="color:#fca5a5;font-weight:600">'+fmt(r.hits)+'</td>'
+      +'<td class="r"><span class="score-pill '+scoreCls+'">'+r.score+'</span></td>'
+      +'<td>'+tags+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function renderUserList(users){
+  var el=document.getElementById('userList');
+  if(!users||!users.length){el.innerHTML='<div class="no-data">No username data yet &mdash; requires SSH-client/&lt;user&gt; UA format</div>';return;}
+  var max=users[0].attempts||1;
+  el.innerHTML=users.map(function(u,i){
+    var pct=Math.max(2,Math.round((u.attempts/max)*100));
+    var rankStyle=i<3?'color:#f1f5f9;font-weight:600':'color:var(--muted)';
+    return '<div class="country-row">'
+      +'<span style="font-family:var(--mono);font-size:10px;min-width:20px;text-align:right;color:var(--muted)">'+(i+1)+'</span>'
+      +'<span style="font-family:var(--mono);font-size:12px;flex:1;'+rankStyle+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 8px">'+esc(u.user)+'</span>'
+      +'<div class="user-bar-track"><div class="user-bar" style="width:'+pct+'%"></div></div>'
+      +'<span class="user-count">'+fmt(u.attempts)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+function renderCountries(countries){
+  var el=document.getElementById('countryList');
+  if(!countries||!countries.length){el.innerHTML='<div class="no-data">No geo data yet</div>';return;}
+  var max=countries[0][1]||1;
+  el.innerHTML=countries.map(function(c){
+    var cc=c[0],hits=c[1];
+    var pct=Math.max(2,Math.round((hits/max)*100));
+    var flag=ccFlag(cc)||'';
+    return '<div class="country-row">'
+      +'<span class="country-flag">'+flag+'</span>'
+      +'<span class="country-name">'+esc(cc)+'</span>'
+      +'<div class="country-bar-track"><div class="country-bar" style="width:'+pct+'%"></div></div>'
+      +'<span class="country-hits">'+fmt(hits)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+function renderAsns(asns){
+  var tbody=document.getElementById('asnTable');
+  if(!asns||!asns.length){tbody.innerHTML='<tr><td colspan="3" class="no-data">No data</td></tr>';return;}
+  tbody.innerHTML=asns.map(function(a,i){
+    return '<tr><td>'+(i+1)+'</td><td style="color:#94a3b8;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.asn)+'</td><td class="r" style="color:#fca5a5">'+fmt(a.hits)+'</td></tr>';
+  }).join('');
+}
+
+function applyData(d){
+  document.getElementById('kpiTotal').textContent=fmt(d.total||0);
+  document.getElementById('kpiIps').textContent=fmt(d.unique_ips||0);
+  document.getElementById('kpiUsers').textContent=fmt(d.unique_users||0);
+  var topIp=d.top_ips&&d.top_ips[0];
+  document.getElementById('kpiTopIp').textContent=topIp?(topIp.ip+' ('+fmt(topIp.hits)+' hits)'):'—';
+  updateChart(d.timeline||[]);
+  renderIpTable(d.top_ips||[]);
+  renderUserList(d.top_users||[]);
+  renderCountries(d.top_countries||[]);
+  renderAsns(d.top_asns||[]);
+  document.getElementById('foot').textContent='Server time: '+(d.server_time||'—');
+}
+
+var lastLoad=null;
+function timeAgoStr(ts){
+  if(!ts) return 'connecting...';
+  var s=Math.round((Date.now()-ts)/1000);
+  if(s<2) return 'just now';
+  if(s<60) return s+'s ago';
+  return Math.floor(s/60)+'m ago';
+}
+
+async function load(){
+  try{
+    var res=await fetch('/api/ssh/data',{credentials:'same-origin'});
+    if(res.status===401){document.getElementById('foot').textContent='401: sign in required';return;}
+    var d=await res.json();
+    lastLoad=Date.now();
+    applyData(d);
+  }catch(e){}
+}
+
+document.addEventListener('DOMContentLoaded',function(){
+  initChart();
+  load();
+  setInterval(load,3000);
+  setInterval(function(){
+    document.getElementById('updatedAgo').textContent=timeAgoStr(lastLoad);
+  },1000);
+});
+</script>
+</body>
+</html>

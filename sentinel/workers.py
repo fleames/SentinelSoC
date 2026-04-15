@@ -28,14 +28,18 @@ def reset():
 
             state.rps_timeline.append(state.counters["rps"])
             state.attack_timeline.append(state.counters["attack_counter"])
+            state.ssh_timeline.append(state.counters.get("ssh_current_second", 0))
 
             if len(state.rps_timeline) > 60:
                 state.rps_timeline.pop(0)
             if len(state.attack_timeline) > 60:
                 state.attack_timeline.pop(0)
+            if len(state.ssh_timeline) > 180:
+                state.ssh_timeline.pop(0)
 
             state.counters["current_second"] = 0
             state.counters["attack_counter"] = 0
+            state.counters["ssh_current_second"] = 0
             ticks += 1
             if ticks % 30 == 0:
                 _prune_runtime_state()
@@ -100,6 +104,12 @@ def reset_dashboard_state():
         state.ip_hosts.clear()
         state.ssh_ips.clear()
         state.ssh_total = 0
+        state.ssh_usernames.clear()
+        state.ssh_ip_users.clear()
+        state.ssh_countries.clear()
+        state.ssh_asns.clear()
+        state.ssh_timeline.clear()
+        state.counters["ssh_current_second"] = 0
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

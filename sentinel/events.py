@@ -251,6 +251,7 @@ def _process_log_event(data, source=""):
                 "ts_epoch": ts_epoch,
                 "ip": ip,
                 "host": host,
+                "ref": ref if ref != "-" else "",
                 "ua": ua[:200],
                 "accept": (accept_v or "")[:120],
                 "fingerprint": fp,

@@ -172,6 +172,7 @@ def api_history_events():
     page_size = min(max(1, page_size), config.HISTORY_EVENT_PAGE_MAX)
     ip_f = (request.args.get("ip") or "").strip()
     host_f = (request.args.get("host") or "").strip().lower()
+    ref_f = (request.args.get("ref") or "").strip().lower()
     ua_f = (request.args.get("ua") or "").strip().lower()
     path_f = (request.args.get("path") or "").strip().lower()
     status_f = (request.args.get("status") or "").strip()
@@ -210,6 +211,8 @@ def api_history_events():
                     continue
                 if host_f and host_f not in str(row.get("host", "")).lower():
                     continue
+                if ref_f and ref_f not in str(row.get("ref", "")).lower():
+                    continue
                 if ua_f and ua_f not in str(row.get("ua", "")).lower():
                     continue
                 if path_f and path_f not in str(row.get("path", row.get("uri", ""))).lower():
@@ -226,6 +229,7 @@ def api_history_events():
                         "ts_epoch": ts,
                         "ip": str(row.get("ip", "")),
                         "host": str(row.get("host", "")),
+                        "ref": str(row.get("ref", "")),
                         "ua": str(row.get("ua", "")),
                         "path": str(row.get("path", row.get("uri", ""))),
                         "status": int(row.get("status", 0) or 0),

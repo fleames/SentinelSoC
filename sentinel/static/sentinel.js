@@ -3,6 +3,8 @@ const MAX=60;
 let rpsHist=[],atkHist=[];
 let lastPayload=null;
 let focusIp='';
+let focusHost='';
+let focusRef='';
 let pollMs=1500;
 let pollTimer=null;
 let paused=false;
@@ -351,14 +353,19 @@ function renderHistoryEvents(rows){
     el.innerHTML='<tr><td colspan="6" style="padding:10px;color:var(--muted);text-align:center">No historical events in selected range</td></tr>';
     return;
   }
+  var S='padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)';
   el.innerHTML=arr.map(function(r){
+    var hostHl=(focusHost&&r.host&&r.host.toLowerCase()===focusHost.toLowerCase());
+    var hostCell=r.host
+      ?'<span class="hist-host-link" data-host="'+escapeAttr(r.host)+'" style="color:'+(hostHl?'var(--warn)':'var(--accent2,#a78bfa)')+';cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Filter by host: '+escapeAttr(r.host)+'">'+escapeHtml(r.host)+'</span>'
+      :'';
     return '<tr>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)">'+escapeHtml(r.ts||'')+'</td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right"><span class="hist-ip-link" data-ip="'+escapeAttr(r.ip||'')+'" style="color:var(--accent);cursor:pointer;font-weight:700" title="Click to drill down">'+escapeHtml(r.ip||'')+'</span></td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.host||'')+'">'+escapeHtml(r.host||'')+'</td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05)" title="'+escapeAttr(r.path||'')+'">'+escapeHtml(r.path||'')+'</td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.status||0)+'</td>'
-      +'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right">'+(r.score||0)+'</td>'
+      +'<td style="'+S+'">'+escapeHtml(r.ts||'')+'</td>'
+      +'<td style="'+S+';text-align:right"><span class="hist-ip-link" data-ip="'+escapeAttr(r.ip||'')+'" style="color:var(--accent);cursor:pointer;font-weight:700" title="Click to drill down">'+escapeHtml(r.ip||'')+'</span></td>'
+      +'<td style="'+S+'" title="'+escapeAttr(r.host||'')+'">'+hostCell+'</td>'
+      +'<td style="'+S+'" title="'+escapeAttr(r.path||'')+'">'+escapeHtml(r.path||'')+'</td>'
+      +'<td style="'+S+';text-align:right">'+(r.status||0)+'</td>'
+      +'<td style="'+S+';text-align:right">'+(r.score||0)+'</td>'
       +'</tr>';
   }).join('');
 }
@@ -369,6 +376,8 @@ async function loadHistoryEvents(){
     var q='/api/history/events?from='+b.from+'&to='+b.to+'&page='+historyPage+'&page_size=50';
     if(historySelectedDay) q+='&day='+encodeURIComponent(historySelectedDay);
     if(focusIp) q+='&ip='+encodeURIComponent(focusIp);
+    if(focusHost) q+='&host='+encodeURIComponent(focusHost);
+    if(focusRef) q+='&ref='+encodeURIComponent(focusRef);
     var r=await fetch(q,{credentials:'same-origin'});
     var j=await r.json();
     if(!r.ok||!j.ok){renderHistoryEvents([]);return;}
@@ -451,11 +460,17 @@ function filterPairs(pairs,q){
 }
 
 function listRow(rank,key,val,barPct,pct,opts){
-  /* opts: {danger,warn,ok,ipClick,tags,bgCls,keyWrap} */
+  /* opts: {danger,warn,ok,ipClick,hostClick,refClick,tags,bgCls,keyWrap,hl} */
   opts=opts||{};
-  var hl=(focusIp&&String(key)===focusIp)?' hl-focus':'';
+  var ipFocused=focusIp&&String(key)===focusIp;
+  var extraHl=opts.hl;
+  var hl=(ipFocused||extraHl)?' hl-focus':'';
   var ipCls=opts.ipClick?' row-ip':'';
+  var hostCls=opts.hostClick?' row-host':'';
+  var refCls=opts.refClick?' row-ref':'';
   var dataIp=opts.ipClick?' data-ip="'+escapeAttr(key)+'"':'';
+  var dataHost=opts.hostClick?' data-host="'+escapeAttr(key)+'"':'';
+  var dataRef=opts.refClick?' data-ref="'+escapeAttr(key)+'"':'';
   var valCls=opts.danger?' danger':opts.warn?' warn':opts.ok?' ok':'';
   var bgCls=opts.bgCls?(' '+opts.bgCls):'';
   var rankCls=rank===1?' r1':'';
@@ -464,7 +479,7 @@ function listRow(rank,key,val,barPct,pct,opts){
     ? ' '+opts.tags.map(function(t){return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>';}).join('')
     : '';
   var pctHtml=pct!=null?('<span class="list-pct">'+pct+'</span>'):'';
-  return '<div class="list-row'+hl+ipCls+'"'+dataIp+'>'
+  return '<div class="list-row'+hl+ipCls+hostCls+refCls+'"'+dataIp+dataHost+dataRef+'>'
     +'<div class="list-row-bg'+bgCls+'" style="width:'+barPct+'%"></div>'
     +'<span class="list-rank'+rankCls+'">'+rank+'</span>'
     +'<span class="list-key'+keyWrap+'" title="'+escapeAttr(key)+'">'+escapeHtml(key)+pills+'</span>'
@@ -525,7 +540,8 @@ function renderIpList(el,pairs,tagMap){
   });
   el.innerHTML=html;
 }
-function renderList(el,data,flag,ipCol){
+function renderList(el,data,flag,ipCol,opts){
+  opts=opts||{};
   var q=document.getElementById('q').value;
   var pairs=filterPairs(data,q);
   if(!pairs.length){el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No matches</span></div>';return;}
@@ -536,7 +552,13 @@ function renderList(el,data,flag,ipCol){
     var barPct=Math.round(((p[1]||0)/maxV)*100);
     var pct=(((p[1]||0)/total)*100).toFixed(1)+'%';
     var isDanger=flag&&p[1]>100;
-    html+=listRow(i+1,p[0],p[1],barPct,pct,{danger:isDanger,ipClick:ipCol,bgCls:isDanger?'danger':''});
+    var isHostFocus=opts.hostClick&&focusHost&&String(p[0]).toLowerCase()===focusHost.toLowerCase();
+    var isRefFocus=opts.refClick&&focusRef&&String(p[0]).toLowerCase().includes(focusRef.toLowerCase());
+    var hl=isHostFocus||isRefFocus;
+    html+=listRow(i+1,p[0],p[1],barPct,pct,{
+      danger:isDanger,ipClick:ipCol,bgCls:isDanger?'danger':'',
+      hostClick:opts.hostClick,refClick:opts.refClick,hl:hl,
+    });
   });
   el.innerHTML=html;
 }
@@ -986,11 +1008,38 @@ async function openIpModal(ip){
   }catch(_e){}
 }
 
+function _updateFocusBar(){
+  var parts=[];
+  if(focusIp) parts.push('IP: '+focusIp);
+  if(focusHost) parts.push('host: '+focusHost);
+  if(focusRef) parts.push('ref: '+focusRef);
+  document.getElementById('focusLbl').innerText=parts.length?('['+parts.join(' | ')+']'):'';
+  document.getElementById('btnClearFocus').style.display=parts.length?'inline-block':'none';
+  var hl=document.getElementById('hostFocusLbl');
+  if(hl) hl.innerText=focusHost?('['+focusHost+']'):'';
+  var rl=document.getElementById('refFocusLbl');
+  if(rl) rl.innerText=focusRef?('['+focusRef+']'):'';
+}
+
 function setFocus(ip){
   focusIp=ip||'';
-  document.getElementById('focusLbl').innerText=focusIp?('[focus: '+focusIp+']'):'';
-  document.getElementById('btnClearFocus').style.display=focusIp?'inline-block':'none';
+  _updateFocusBar();
   if(lastPayload) applyRender(lastPayload);
+  historyPage=1;
+  loadHistoryEvents();
+}
+
+function setFocusHost(host){
+  focusHost=host||'';
+  _updateFocusBar();
+  if(lastPayload) applyRender(lastPayload);
+  historyPage=1;
+  loadHistoryEvents();
+}
+
+function setFocusRef(ref){
+  focusRef=ref||'';
+  _updateFocusBar();
   historyPage=1;
   loadHistoryEvents();
 }
@@ -1072,9 +1121,9 @@ function renderStorage(el,s){
 
 function applyRender(d){
   renderIpList(document.getElementById('ips'),d.ips,d.ip_tags||{});
-  renderList(document.getElementById('domains'),d.domains);
+  renderList(document.getElementById('domains'),d.domains,false,false,{hostClick:true});
   renderList(document.getElementById('paths'),d.paths);
-  renderList(document.getElementById('refs'),d.referers);
+  renderList(document.getElementById('refs'),d.referers,false,false,{refClick:true});
   renderList(document.getElementById('asn'),d.asn);
   renderStatus(document.getElementById('status'),d.status);
   renderAlerts(document.getElementById('alerts'),d.alerts);
@@ -1232,7 +1281,12 @@ document.getElementById('btnHistNext').addEventListener('click',function(){
   loadHistoryEvents();
 });
 document.getElementById('btnExport').addEventListener('click',exportJson);
-document.getElementById('btnClearFocus').addEventListener('click',function(){ setFocus(''); });
+document.getElementById('btnClearFocus').addEventListener('click',function(){
+  focusIp=''; focusHost=''; focusRef='';
+  _updateFocusBar();
+  if(lastPayload) applyRender(lastPayload);
+  historyPage=1; loadHistoryEvents();
+});
 
 function warnIptables(j){
   if(j&&j.iptables&&j.iptables.enabled&&!j.iptables.ok){ alert('iptables: '+(j.iptables.error||'failed')); }
@@ -1352,6 +1406,26 @@ document.body.addEventListener('click',function(e){
   if(ar&&ar.dataset.ip){ toggleIpFocus(ar.dataset.ip); return; }
   var hi=e.target.closest('.hist-ip-link');
   if(hi&&hi.dataset.ip){ toggleIpFocus(hi.dataset.ip); return; }
+  // Host drill-down
+  var hostRow=e.target.closest('.row-host');
+  if(hostRow&&hostRow.dataset.host){
+    var h=hostRow.dataset.host;
+    if(focusHost===h){ setFocusHost(''); } else { setFocusHost(h); }
+    return;
+  }
+  var hhl=e.target.closest('.hist-host-link');
+  if(hhl&&hhl.dataset.host){
+    var hh=hhl.dataset.host;
+    if(focusHost===hh){ setFocusHost(''); } else { setFocusHost(hh); }
+    return;
+  }
+  // Referer drill-down
+  var refRow=e.target.closest('.row-ref');
+  if(refRow&&refRow.dataset.ref){
+    var rf=refRow.dataset.ref;
+    if(focusRef===rf){ setFocusRef(''); } else { setFocusRef(rf); }
+    return;
+  }
 });
 
 document.addEventListener('keydown',function(e){

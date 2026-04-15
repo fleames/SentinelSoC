@@ -59,6 +59,26 @@ def data():
                 }
             )
 
+        ssh_ips = [
+            (ip, counts.get("/ssh", 0))
+            for ip, counts in state.ip_paths.items()
+            if counts.get("/ssh", 0) > 0
+        ]
+        ssh_top_raw = sorted(ssh_ips, key=lambda x: -x[1])[:20]
+        ssh_enriched = []
+        for tip, ssh_hits in ssh_top_raw:
+            g = state.ip_geo.get(tip, {})
+            if not isinstance(g, dict):
+                g = {}
+            ssh_enriched.append({
+                "ip": tip,
+                "ssh_hits": ssh_hits,
+                "score": state.ip_scores.get(tip, 0),
+                "country": g.get("country", "?"),
+                "asn": (g.get("asn") or "")[:100],
+                "tags": sorted(state.ip_tags.get(tip, ())),
+            })
+
         alerts_list = list(state.recent_alerts)[:50]
 
         stream_started_at = state.counters["stream_started_at"]
@@ -136,6 +156,7 @@ def data():
             "scores": scores_snapshot,
             "geo": geo_snapshot,
             "top_threats": threats_enriched,
+            "ssh_attackers": ssh_enriched,
             "alerts": alerts_list,
             "botnet_campaigns": campaigns_snapshot,
             "rps_timeline": rps_timeline_snapshot,

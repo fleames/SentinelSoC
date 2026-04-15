@@ -24,6 +24,12 @@ def api_ssh_data():
         unique_ips = len(state.ssh_ips)
         unique_users = len(state.ssh_usernames)
         timeline = list(state.ssh_timeline)
+        rates = {
+            "m1":  sum(timeline[-60:]),
+            "m5":  sum(timeline[-300:]),
+            "m10": sum(timeline[-600:]),
+            "h1":  sum(timeline[-3600:]),
+        }
 
         # Top 50 attacking IPs enriched with geo + top username
         top_ips_raw = state.ssh_ips.most_common(50)
@@ -100,6 +106,7 @@ def api_ssh_data():
         "unique_ips": unique_ips,
         "unique_users": unique_users,
         "timeline": timeline,
+        "rates": rates,
         "top_ips": top_ips,
         "top_users": top_users,
         "top_countries": [[c, n] for c, n in top_countries],

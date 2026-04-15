@@ -34,7 +34,7 @@ def reset():
                 state.rps_timeline.pop(0)
             if len(state.attack_timeline) > 60:
                 state.attack_timeline.pop(0)
-            if len(state.ssh_timeline) > 180:
+            if len(state.ssh_timeline) > 3600:   # keep 1 hour of per-second ticks
                 state.ssh_timeline.pop(0)
 
             state.counters["current_second"] = 0

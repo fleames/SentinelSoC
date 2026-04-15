@@ -124,9 +124,22 @@
 .geo-bar{height:100%;background:linear-gradient(90deg,var(--danger),rgba(255,51,68,.4));border-radius:3px;}
 .geo-hits{color:var(--text-dim);font-variant-numeric:tabular-nums;min-width:44px;text-align:right;flex-shrink:0;}
 
+/* Rate badges */
+.rate-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 14px 0;}
+.rate-badge{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:9px 12px;text-align:center;}
+.rate-badge .rb-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-family:var(--mono);margin-bottom:4px;}
+.rate-badge .rb-val{font-family:var(--mono);font-size:22px;font-weight:700;line-height:1;transition:color .3s;}
+.rate-badge .rb-sub{font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:3px;}
+.rate-badge.hot .rb-val{color:var(--danger);text-shadow:0 0 12px rgba(220,38,38,.4);}
+.rate-badge.warm .rb-val{color:#f97316;}
+.rate-badge.cool .rb-val{color:var(--warn);}
+.rate-badge.idle .rb-val{color:#4ade80;}
 /* Chart toolbar */
-.chart-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px 0;flex-wrap:wrap;}
-.chart-wrap{padding:10px 12px 12px;height:130px;position:relative;}
+.chart-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px 4px;flex-wrap:wrap;}
+.chart-range-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;color:var(--muted);font-size:10px;font-weight:600;font-family:var(--mono);padding:3px 10px;cursor:pointer;transition:all var(--transition);}
+.chart-range-btn:hover{border-color:rgba(255,255,255,.2);color:var(--text);}
+.chart-range-btn.active{background:rgba(220,38,38,.12);border-color:rgba(220,38,38,.4);color:var(--danger);}
+.chart-wrap{padding:4px 12px 12px;height:130px;position:relative;}
 
 /* No-data state */
 .ssh-empty{color:var(--muted);font-family:var(--mono);font-size:11px;padding:20px 14px;text-align:center;}
@@ -280,9 +293,20 @@
   <!-- Main column -->
   <div>
 
-    <!-- Attack timeline -->
-    <div class="card">
-      <h2>SSH attack rate <span class="hint">auth failures per second &mdash; last 3 min</span></h2>
+    <!-- Attack rate badges + timeline -->
+    <div class="card" style="padding-bottom:4px">
+      <h2 style="padding:12px 14px 0;margin:0">SSH attack rate <span class="hint" id="chartRangeHint">last 3 min &mdash; per second</span></h2>
+      <div class="rate-strip">
+        <div class="rate-badge" id="rate1m"><div class="rb-label">1 min</div><div class="rb-val">—</div><div class="rb-sub">failures</div></div>
+        <div class="rate-badge" id="rate5m"><div class="rb-label">5 min</div><div class="rb-val">—</div><div class="rb-sub">failures</div></div>
+        <div class="rate-badge" id="rate10m"><div class="rb-label">10 min</div><div class="rb-val">—</div><div class="rb-sub">failures</div></div>
+        <div class="rate-badge" id="rate1h"><div class="rb-label">1 hour</div><div class="rb-val">—</div><div class="rb-sub">failures</div></div>
+      </div>
+      <div class="chart-toolbar">
+        <button class="chart-range-btn active" id="rangeBtn3m" onclick="setChartRange('3m')">3m</button>
+        <button class="chart-range-btn" id="rangeBtn15m" onclick="setChartRange('15m')">15m</button>
+        <button class="chart-range-btn" id="rangeBtn1h" onclick="setChartRange('1h')">1h</button>
+      </div>
       <div class="chart-wrap"><canvas id="timelineChart"></canvas></div>
     </div>
 
@@ -407,47 +431,129 @@ function setStrip(on){
   else  {s.style.background='linear-gradient(90deg,var(--ok),var(--accent),var(--ok))';s.style.backgroundSize='200% 100%';s.style.boxShadow='0 0 18px var(--ok),0 0 50px var(--ok)';}
 }
 
+/* ── rate badges ── */
+function _rateTier(v, m1){
+  if(!m1) return 'idle';
+  if(v>=m1*0.75) return 'hot';
+  if(v>=m1*0.4)  return 'warm';
+  if(v>0)        return 'cool';
+  return 'idle';
+}
+function updateRates(rates){
+  if(!rates) return;
+  var pairs=[['rate1m',rates.m1,'1 min'],['rate5m',rates.m5,'5 min'],['rate10m',rates.m10,'10 min'],['rate1h',rates.h1,'1 hour']];
+  pairs.forEach(function(p){
+    var el=document.getElementById(p[0]);
+    if(!el) return;
+    var v=p[1]||0;
+    var tier=_rateTier(v, rates.m1);
+    el.className='rate-badge '+tier;
+    el.querySelector('.rb-val').textContent=fmt(v);
+  });
+}
+
 /* ── chart ── */
 var tlChart=null;
+var _tlData=[];
+var _chartRange='3m';
+
+function _bucketTimeline(tl, bucketSize){
+  /* Aggregate per-second ticks into fixed-size buckets (sum). */
+  var out=[];
+  for(var i=0;i<tl.length;i+=bucketSize){
+    var slice=tl.slice(i,i+bucketSize);
+    out.push(slice.reduce(function(a,b){return a+b;},0));
+  }
+  return out;
+}
+
+function _chartDataForRange(tl, range){
+  if(range==='3m'){
+    var raw=tl.slice(-180);
+    return {
+      data:raw,
+      labels:raw.map(function(_,i){return (i-raw.length+1)+'s';}),
+      hint:'last 3 min \u2014 per second',
+      labelSuffix:'/s',
+    };
+  }
+  if(range==='15m'){
+    var raw=tl.slice(-900);
+    var bucketed=_bucketTimeline(raw,15);
+    return {
+      data:bucketed,
+      labels:bucketed.map(function(_,i){return '-'+(bucketed.length-i-1)+'m';}),
+      hint:'last 15 min \u2014 per 15 s bucket',
+      labelSuffix:' in 15s',
+    };
+  }
+  /* 1h */
+  var raw=tl.slice(-3600);
+  var bucketed=_bucketTimeline(raw,60);
+  return {
+    data:bucketed,
+    labels:bucketed.map(function(_,i){var m=bucketed.length-i-1;return m?'-'+m+'m':'now';}),
+    hint:'last 1 hour \u2014 per minute',
+    labelSuffix:'/min',
+  };
+}
+
+function setChartRange(range){
+  _chartRange=range;
+  ['3m','15m','1h'].forEach(function(r){
+    var b=document.getElementById('rangeBtn'+r);
+    if(b) b.className='chart-range-btn'+(r===range?' active':'');
+  });
+  updateChart(_tlData);
+}
+
 function initChart(){
   var ctx=document.getElementById('timelineChart').getContext('2d');
   tlChart=new Chart(ctx,{
-    type:'line',
+    type:'bar',
     data:{labels:[],datasets:[{
-      label:'Failures/s',
+      label:'Failures',
       data:[],
-      borderColor:'#dc2626',
-      backgroundColor:'rgba(220,38,38,0.12)',
-      borderWidth:1.5,
-      fill:true,
-      tension:0.35,
-      pointRadius:0,
+      backgroundColor:'rgba(220,38,38,0.55)',
+      borderColor:'rgba(220,38,38,0.9)',
+      borderWidth:0,
+      borderRadius:2,
+      hoverBackgroundColor:'rgba(220,38,38,0.8)',
     }]},
     options:{
       responsive:true,maintainAspectRatio:false,
-      animation:{duration:200},
+      animation:{duration:150},
       plugins:{legend:{display:false},tooltip:{
         backgroundColor:'rgba(2,5,14,0.95)',
         titleColor:'#94a3b8',titleFont:{family:'JetBrains Mono',size:10},
         bodyColor:'#f1f5f9',bodyFont:{family:'JetBrains Mono',size:11},
         borderColor:'rgba(255,51,68,.3)',borderWidth:1,
+        callbacks:{
+          label:function(ctx){return ' '+fmt(ctx.parsed.y)+_chartRangeSuffix;}
+        }
       }},
       scales:{
-        x:{display:false},
+        x:{display:true,
+           ticks:{color:'rgba(148,163,184,.35)',font:{family:'JetBrains Mono',size:8},maxTicksLimit:8,maxRotation:0},
+           grid:{display:false},border:{display:false}},
         y:{beginAtZero:true,
-           ticks:{color:'#2e4057',font:{family:'JetBrains Mono',size:9}},
-           grid:{color:'rgba(255,255,255,.04)'},
-        },
+           ticks:{color:'rgba(148,163,184,.45)',font:{family:'JetBrains Mono',size:9},maxTicksLimit:5},
+           grid:{color:'rgba(255,255,255,.04)'},border:{display:false}},
       },
     }
   });
 }
+var _chartRangeSuffix='/s';
 
 function updateChart(tl){
+  _tlData=tl||[];
   if(!tlChart) return;
-  var n=tl.length;
-  tlChart.data.labels=tl.map(function(_,i){return (i-n+1)+'s';});
-  tlChart.data.datasets[0].data=tl;
+  var view=_chartDataForRange(_tlData,_chartRange);
+  _chartRangeSuffix=view.labelSuffix;
+  tlChart.data.labels=view.labels;
+  tlChart.data.datasets[0].data=view.data;
+  var hint=document.getElementById('chartRangeHint');
+  if(hint) hint.textContent=view.hint;
   tlChart.update('none');
 }
 
@@ -944,6 +1050,7 @@ function renderKeyFps(fps){
 /* ── main render ── */
 function applyData(d){
   updateKpis(d);
+  updateRates(d.rates||{});
   updateChart(d.timeline||[]);
   renderIpTable(d.top_ips||[]);
   renderTopAttacker(d.top_ips||[]);

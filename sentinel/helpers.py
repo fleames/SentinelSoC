@@ -226,6 +226,16 @@ def _history_bucket():
     }
 
 
+def _update_ssh_history_bucket(ts):
+    """Increment the per-minute SSH bucket. Must be called inside state.lock."""
+    key = _history_bucket_key(ts)
+    b = state.ssh_history_buckets.get(key)
+    if b is None:
+        b = {"ts": key, "total": 0}
+        state.ssh_history_buckets[key] = b
+    b["total"] += 1
+
+
 def _update_history_bucket(ts, ip, path, status, score_value):
     key = _history_bucket_key(ts)
     b = state.history_buckets.get(key)
@@ -283,6 +293,8 @@ def _prune_runtime_state(now=None):
     hist_cutoff_key = _history_bucket_key(now - config.HISTORY_RETENTION_S)
     for k in [k for k in state.history_buckets.keys() if k < hist_cutoff_key]:
         state.history_buckets.pop(k, None)
+    for k in [k for k in state.ssh_history_buckets.keys() if k < hist_cutoff_key]:
+        state.ssh_history_buckets.pop(k, None)
 
 
 def _history_bucket_to_json(b):

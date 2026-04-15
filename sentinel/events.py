@@ -21,13 +21,14 @@ from sentinel.helpers import (
     _normalize_client_ip,
     _normalize_uri_campaign,
     _update_history_bucket,
+    _update_ssh_history_bucket,
     extract_request_host,
     _header_first,
 )
 from sentinel.parsing import _parse_caddy_access_line
 from sentinel.rules import _apply_rules
 from sentinel.ua import _ua_tags
-from sentinel.persistence import _append_history_event
+from sentinel.persistence import _append_history_event, _append_ssh_history_event
 from sentinel.enrichment import enqueue_reputation
 
 
@@ -327,7 +328,9 @@ def _process_log_event(data, source=""):
             else:
                 state.recent_alerts.appendleft(alert_row)
 
-        if not is_ssh:
+        if is_ssh:
+            _update_ssh_history_bucket(ts_epoch)
+        else:
             _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
         if source:
             state.sources[source] += 1
@@ -353,9 +356,10 @@ def _process_log_event(data, source=""):
         "tags": _ua_tags(ua),
     }
     if is_ssh:
-        # SSH events go to dedicated SSH history — not shared HTTP history files
+        # SSH events: in-memory ring + disk file
         with state.lock:
             state.ssh_history_events.appendleft(event_row)
+        _append_ssh_history_event(event_row)
     elif s > 0 or not _is_static_asset(path_bucket):
         # Skip logging zero-score static assets to history — they are browser noise
         # (JS chunks, CSS, fonts, icons) and clutter the historical events view.

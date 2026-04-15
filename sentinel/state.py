@@ -55,6 +55,7 @@ pending_geo_hits = defaultdict(int)
 
 lock = threading.Lock()
 audit_lock = threading.Lock()
+ssh_history_lock = threading.Lock()
 
 # Ingest queue: (source, dict) tuples pushed by /api/ingest, drained by _ingest_worker.
 # Decouples HTTP receipt from state mutation — requests return immediately, worker
@@ -130,6 +131,7 @@ ssh_kex_fp_ips = defaultdict(set)           # kex_fp -> set of IPs sharing that 
 # SSH source-port entropy
 ssh_ip_src_ports = defaultdict(lambda: deque(maxlen=200))  # ip -> recent source ports (capped)
 ssh_ip_port_entropy = {}                    # ip -> Shannon entropy in bits (updated per 10 new ports)
+ssh_history_buckets = {}                    # minute-floor ts -> {"ts": int, "total": int}
 ip_notes = {}                               # ip -> freeform analyst note (persisted, not cleared on reset)
 ip_categories = {}                          # ip -> category string e.g. "botnet", "scanner", "apt", custom
 behavior_signal_counts = Counter()

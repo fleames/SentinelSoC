@@ -12,9 +12,12 @@ from sentinel.helpers import _prune_runtime_state
 from sentinel.parsing import iter_caddy_log_objects
 from sentinel.persistence import (
     _prune_history_event_files,
+    _prune_ssh_history_event_files,
     _save_behavior_state,
     _save_history_buckets,
+    _save_ssh_history_buckets,
     _save_parsed_state,
+    _clear_ssh_history_event_files,
 )
 
 
@@ -45,6 +48,7 @@ def reset():
                 _prune_runtime_state()
         if ticks % 60 == 0:
             _prune_history_event_files()
+            _prune_ssh_history_event_files()
 
 
 def reset_dashboard_state():
@@ -111,6 +115,7 @@ def reset_dashboard_state():
         state.ssh_timeline.clear()
         state.ssh_recent_alerts.clear()
         state.ssh_history_events.clear()
+        state.ssh_history_buckets.clear()
         state.counters["ssh_current_second"] = 0
         state.ssh_ip_auth_methods.clear()
         state.ssh_auth_method_totals.clear()
@@ -221,6 +226,7 @@ def _state_flush_worker():
             _save_parsed_state()
             _save_behavior_state()
             _save_history_buckets()
+            _save_ssh_history_buckets()
             _prune_history_event_files()
         except Exception:
             pass

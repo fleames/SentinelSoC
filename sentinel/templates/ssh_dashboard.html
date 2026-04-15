@@ -234,6 +234,28 @@
   <a class="dash-nav-link active" href="/ssh">SSH Attacks</a>
 </nav>
 
+<div class="toolbar">
+  <button type="button" class="toolbtn" id="btnSshPause">Pause</button>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">Poll:</span>
+  <div class="poll-seg">
+    <button type="button" class="toolbtn ssh-poll-opt" data-ms="1000">1s</button>
+    <button type="button" class="toolbtn ssh-poll-opt on" data-ms="1500">1.5s</button>
+    <button type="button" class="toolbtn ssh-poll-opt" data-ms="3000">3s</button>
+    <button type="button" class="toolbtn ssh-poll-opt" data-ms="5000">5s</button>
+  </div>
+  <div class="toolbar-sep"></div>
+  <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">History:</span>
+  <div class="poll-seg">
+    <button type="button" class="toolbtn ssh-hist-range on" data-sec="86400">24h</button>
+    <button type="button" class="toolbtn ssh-hist-range" data-sec="604800">7d</button>
+    <button type="button" class="toolbtn ssh-hist-range" data-sec="2592000">30d</button>
+  </div>
+  <select id="sshHistDaySelect" class="hist-day-select" title="Select a specific saved UTC day">
+    <option value="">Range mode</option>
+  </select>
+  <button type="button" class="toolbtn" id="btnSshHistMode">History chart</button>
+</div>
+
 <!-- KPI row -->
 <div class="kpi-row">
   <div class="kpi ssh" id="kpiTotalBox">
@@ -332,10 +354,14 @@
       <div style="max-height:340px;overflow-y:auto" id="userList"></div>
     </div>
 
-    <!-- Historical events -->
-    <div class="card">
-      <h2>Historical telemetry <span class="hint">recent SSH auth events</span></h2>
-      <div class="hist-table-wrap" style="max-height:300px">
+    <!-- Historical telemetry -->
+    <div class="card" id="sshHistCard">
+      <h2>Historical telemetry <span class="hint" id="sshHistMeta">recent SSH auth events</span></h2>
+      <!-- History chart (hidden by default, shown in History chart mode) -->
+      <div id="sshHistChartWrap" style="display:none;padding:4px 12px 12px;height:160px;position:relative">
+        <canvas id="sshHistChart"></canvas>
+      </div>
+      <div class="hist-table-wrap" style="max-height:340px" id="sshHistTableWrap">
         <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
           <thead>
             <tr style="position:sticky;top:0;background:rgba(8,12,22,0.96)">
@@ -348,6 +374,11 @@
           </thead>
           <tbody id="sshHistoryRows"></tbody>
         </table>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid rgba(255,255,255,.04)" id="sshHistPagination">
+        <button type="button" class="toolbtn" id="btnSshHistPrev" style="font-size:10px;padding:3px 10px">&#8592; Prev</button>
+        <span id="sshHistPageInfo" style="font-family:var(--mono);font-size:11px;color:var(--muted);flex:1;text-align:center"></span>
+        <button type="button" class="toolbtn" id="btnSshHistNext" style="font-size:10px;padding:3px 10px">Next &#8594;</button>
       </div>
     </div>
 
@@ -1058,7 +1089,8 @@ function applyData(d){
   renderCountries(d.top_countries||[]);
   renderAsns(d.top_asns||[]);
   renderSshAlerts(d.alerts||[]);
-  renderSshHistory(d.history||[]);
+  // Only show live history when not pinned to a historical range/day
+  if(!sshHistSelectedDay) renderSshHistory(d.history||[]);
   renderAuthStrip(d.auth_totals||{});
   renderCampaigns(d.campaigns||[]);
   renderKeyFps(d.top_key_fps||[]);
@@ -1271,12 +1303,38 @@ async function loadActors(){
 
 /* ── polling ── */
 var lastLoad=null;
+var sshPollMs=1500;
+var sshPollTimer=null;
+var sshPaused=false;
+var actorsPollTimer=null;
+
 function timeAgoStr(ts){
   if(!ts) return 'connecting...';
   var s=Math.round((Date.now()-ts)/1000);
   if(s<2) return 'just now';
   if(s<60) return s+'s ago';
   return Math.floor(s/60)+'m ago';
+}
+
+function setSshPoll(ms){
+  sshPollMs=ms;
+  document.querySelectorAll('.ssh-poll-opt').forEach(function(b){ b.classList.toggle('on',+b.dataset.ms===ms); });
+  scheduleSshPoll();
+}
+function scheduleSshPoll(){
+  if(sshPollTimer) clearInterval(sshPollTimer);
+  sshPollTimer=null;
+  if(sshPaused||sshPollMs<=0) return;
+  sshPollTimer=setInterval(load,sshPollMs);
+}
+function setSshPaused(p){
+  sshPaused=p;
+  var btn=document.getElementById('btnSshPause');
+  btn.classList.toggle('on',p);
+  btn.innerText=p?'Resume':'Pause';
+  var fb=document.getElementById('freezeBadge');
+  if(fb) fb.style.display=p?'inline-flex':'none';
+  scheduleSshPoll();
 }
 
 async function load(){
@@ -1293,15 +1351,209 @@ async function load(){
   }
 }
 
+/* ── SSH history ── */
+var sshHistMode=false;
+var sshHistChart=null;
+var sshHistRangeSec=86400;
+var sshHistPage=1;
+var sshHistTotal=0;
+var sshHistSelectedDay='';
+var sshHistDaysLoaded=false;
+
+function sshHistRangeBounds(){
+  if(sshHistSelectedDay){
+    var start=Date.parse(sshHistSelectedDay+'T00:00:00Z');
+    if(!isNaN(start)){
+      var from=Math.floor(start/1000);
+      return {from:from,to:from+86400-1};
+    }
+  }
+  var to=Math.floor(Date.now()/1000);
+  return {from:Math.max(0,to-sshHistRangeSec),to:to};
+}
+
+async function loadSshHistoryDays(){
+  if(sshHistDaysLoaded) return;
+  try{
+    var r=await fetch('/api/ssh/history/days',{credentials:'same-origin'});
+    if(!r.ok) return;
+    var j=await r.json();
+    var sel=document.getElementById('sshHistDaySelect');
+    if(!sel) return;
+    while(sel.options.length>1) sel.remove(1);
+    (j.days||[]).forEach(function(d){
+      var o=document.createElement('option');
+      o.value=d.day;
+      o.text=d.day+' ('+d.total.toLocaleString()+' events)';
+      sel.appendChild(o);
+    });
+    sshHistDaysLoaded=true;
+  }catch(e){}
+}
+
+async function loadSshHistorySeries(){
+  var bounds=sshHistRangeBounds();
+  var span=bounds.to-bounds.from;
+  var bucket=span>86400*2?'hour':'minute';
+  var url='/api/ssh/history/series?from='+bounds.from+'&to='+bounds.to+'&bucket='+bucket;
+  if(sshHistSelectedDay) url='/api/ssh/history/series?day='+encodeURIComponent(sshHistSelectedDay)+'&bucket=minute';
+  try{
+    var r=await fetch(url,{credentials:'same-origin'});
+    if(!r.ok) return;
+    var j=await r.json();
+    renderSshHistChart(j.points||[],bucket);
+    var total=j.points.reduce(function(a,p){return a+p.total;},0);
+    document.getElementById('sshHistMeta').textContent=
+      (sshHistSelectedDay||('last '+Math.round((bounds.to-bounds.from)/3600)+'h'))+
+      ' \u2014 '+total.toLocaleString()+' events';
+  }catch(e){}
+}
+
+async function loadSshHistoryEvents(){
+  var bounds=sshHistRangeBounds();
+  var url='/api/ssh/history/events?from='+bounds.from+'&to='+bounds.to+'&page='+sshHistPage;
+  if(sshHistSelectedDay) url='/api/ssh/history/events?day='+encodeURIComponent(sshHistSelectedDay)+'&page='+sshHistPage;
+  try{
+    var r=await fetch(url,{credentials:'same-origin'});
+    if(!r.ok) return;
+    var j=await r.json();
+    sshHistTotal=j.total||0;
+    renderSshHistTable(j.rows||[]);
+    var info=document.getElementById('sshHistPageInfo');
+    if(info){
+      var start=(sshHistPage-1)*100+1;
+      var end=Math.min(sshHistPage*100,sshHistTotal);
+      info.textContent=sshHistTotal?start+'\u2013'+end+' of '+sshHistTotal.toLocaleString():'No events';
+    }
+    var prev=document.getElementById('btnSshHistPrev');
+    var next=document.getElementById('btnSshHistNext');
+    if(prev) prev.disabled=sshHistPage<=1;
+    if(next) next.disabled=sshHistPage*100>=sshHistTotal;
+  }catch(e){}
+}
+
+function refreshSshHistory(){
+  if(sshHistMode) loadSshHistorySeries();
+  loadSshHistoryEvents();
+}
+
+function renderSshHistTable(rows){
+  var tb=document.getElementById('sshHistoryRows');
+  if(!tb) return;
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="5" style="padding:14px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:11px">No events in range</td></tr>';
+    return;
+  }
+  tb.innerHTML=rows.map(function(e){
+    var ts=(e.ts||'').replace('T',' ').replace(/\.[0-9]+([+-][0-9][0-9]:[0-9][0-9]|Z)?$/,'').replace('+00:00','');
+    var ua=e.ua||'';
+    var user=ua.startsWith('SSH-client/')?ua.slice(11):ua;
+    var scoreCol=e.score>50?'var(--danger)':e.score>20?'var(--warn)':'var(--text-dim)';
+    return '<tr style="border-bottom:1px solid rgba(255,255,255,.025)">'
+      +'<td style="padding:5px 8px;font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap">'+ts+' UTC</td>'
+      +'<td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--accent)">'+e.ip+'</td>'
+      +'<td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:#fbbf24">'+user+'</td>'
+      +'<td style="padding:5px 8px;text-align:center;font-size:11px">'+e.country+'</td>'
+      +'<td style="padding:5px 8px;text-align:right;font-family:var(--mono);font-size:11px;color:'+scoreCol+'">'+e.score+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function renderSshHistChart(points,bucket){
+  var wrap=document.getElementById('sshHistChartWrap');
+  if(!wrap) return;
+  wrap.style.display=sshHistMode?'block':'none';
+  if(!sshHistMode) return;
+  var labels=points.map(function(p){
+    var d=new Date(p.ts*1000);
+    if(bucket==='hour') return d.toISOString().slice(0,13).replace('T',' ')+'h';
+    return d.toISOString().slice(11,16);
+  });
+  var data=points.map(function(p){return p.total;});
+  if(sshHistChart){
+    sshHistChart.data.labels=labels;
+    sshHistChart.data.datasets[0].data=data;
+    sshHistChart.update('none');
+    return;
+  }
+  var ctx=document.getElementById('sshHistChart').getContext('2d');
+  sshHistChart=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels:labels,
+      datasets:[{label:'Auth failures',data:data,backgroundColor:'rgba(255,51,68,.45)',borderColor:'rgba(255,51,68,.8)',borderWidth:1,borderRadius:2}]
+    },
+    options:{
+      animation:false,responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{title:function(i){return i[0].label;}}}},
+      scales:{
+        x:{display:false,grid:{display:false}},
+        y:{display:true,grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'rgba(255,255,255,.4)',font:{size:9}}}
+      }
+    }
+  });
+}
+
 document.addEventListener('DOMContentLoaded',function(){
   initChart();
   load();
   loadActors();
-  setInterval(load,1500);
-  setInterval(loadActors,6000);
+  setSshPoll(sshPollMs);
+  if(actorsPollTimer) clearInterval(actorsPollTimer);
+  actorsPollTimer=setInterval(loadActors,6000);
+  loadSshHistoryDays();
+  refreshSshHistory();
   setInterval(function(){
     document.getElementById('updatedAgo').textContent=timeAgoStr(lastLoad);
   },1000);
+
+  // Poll + pause controls
+  document.getElementById('btnSshPause').addEventListener('click',function(){ setSshPaused(!sshPaused); });
+  document.querySelectorAll('.ssh-poll-opt').forEach(function(b){
+    b.addEventListener('click',function(){ setSshPaused(false); setSshPoll(+b.dataset.ms); });
+  });
+
+  // History range buttons
+  document.querySelectorAll('.ssh-hist-range').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('.ssh-hist-range').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      sshHistSelectedDay='';
+      var sel=document.getElementById('sshHistDaySelect');
+      if(sel) sel.value='';
+      sshHistRangeSec=+b.dataset.sec||86400;
+      sshHistPage=1;
+      refreshSshHistory();
+    });
+  });
+
+  // Day selector
+  document.getElementById('sshHistDaySelect').addEventListener('change',function(e){
+    sshHistSelectedDay=(e.target.value||'').trim();
+    sshHistPage=1;
+    refreshSshHistory();
+  });
+
+  // History chart toggle
+  document.getElementById('btnSshHistMode').addEventListener('click',function(){
+    sshHistMode=!sshHistMode;
+    this.classList.toggle('on',sshHistMode);
+    var wrap=document.getElementById('sshHistChartWrap');
+    if(wrap) wrap.style.display=sshHistMode?'block':'none';
+    if(sshHistMode) loadSshHistorySeries();
+  });
+
+  // Pagination
+  document.getElementById('btnSshHistPrev').addEventListener('click',function(){
+    if(sshHistPage<=1) return;
+    sshHistPage--;
+    loadSshHistoryEvents();
+  });
+  document.getElementById('btnSshHistNext').addEventListener('click',function(){
+    if(sshHistPage*100>=sshHistTotal) return;
+    sshHistPage++;
+    loadSshHistoryEvents();
+  });
 
   // IP drill-down modal close
   document.getElementById('sshDrillClose').addEventListener('click',function(){

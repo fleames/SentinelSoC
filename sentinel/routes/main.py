@@ -275,13 +275,16 @@ def api_reset():
     from sentinel.persistence import (
         _save_parsed_state, _save_behavior_state,
         _save_history_buckets, _clear_history_event_files,
+        _save_ssh_history_buckets, _clear_ssh_history_event_files,
     )
     from sentinel.auth import _audit_write, _audit_actor
     reset_dashboard_state()
     _clear_history_event_files()
+    _clear_ssh_history_event_files()
     _save_parsed_state()
     _save_behavior_state()
     _save_history_buckets()
+    _save_ssh_history_buckets()
     # Clear audit log last so the reset entry itself is not preserved
     if config.AUDIT_LOG_PATH:
         try:

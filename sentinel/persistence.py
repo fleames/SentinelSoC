@@ -142,6 +142,8 @@ def _ensure_state_dir():
         os.makedirs(config.STATE_DIR, mode=0o700, exist_ok=True)
         if config.HISTORY_EVENTS_DIR:
             os.makedirs(config.HISTORY_EVENTS_DIR, mode=0o700, exist_ok=True)
+        if config.SSH_HISTORY_EVENTS_DIR:
+            os.makedirs(config.SSH_HISTORY_EVENTS_DIR, mode=0o700, exist_ok=True)
         print(f"[sentinel] state dir ready: {config.STATE_DIR}", file=sys.stderr, flush=True)
     except OSError as err:
         print(f"[sentinel] state dir mkdir failed ({config.STATE_DIR}): {err}", file=sys.stderr, flush=True)
@@ -241,6 +243,108 @@ def _clear_history_event_files():
                 os.remove(os.path.join(config.HISTORY_EVENTS_DIR, name))
             except OSError:
                 pass
+
+
+# ========================
+# SSH HISTORY EVENTS
+# ========================
+def _ssh_history_events_path(ts):
+    if not config.SSH_HISTORY_EVENTS_DIR:
+        return ""
+    d = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    return os.path.join(config.SSH_HISTORY_EVENTS_DIR, f"{d}.jsonl")
+
+
+def _append_ssh_history_event(event_row):
+    path = _ssh_history_events_path(event_row.get("ts_epoch", time.time()))
+    if not path:
+        return
+    try:
+        os.makedirs(config.SSH_HISTORY_EVENTS_DIR, exist_ok=True)
+        payload = json.dumps(event_row, separators=(",", ":"), ensure_ascii=True) + "\n"
+        with state.ssh_history_lock:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(payload)
+    except OSError:
+        pass
+
+
+def _prune_ssh_history_event_files(now=None):
+    if not config.SSH_HISTORY_EVENTS_DIR or not os.path.isdir(config.SSH_HISTORY_EVENTS_DIR):
+        return
+    now = now or time.time()
+    cutoff = now - config.HISTORY_RETENTION_S
+    for name in os.listdir(config.SSH_HISTORY_EVENTS_DIR):
+        if not name.endswith(".jsonl"):
+            continue
+        p = os.path.join(config.SSH_HISTORY_EVENTS_DIR, name)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_mtime < cutoff:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def _clear_ssh_history_event_files():
+    if not config.SSH_HISTORY_EVENTS_DIR or not os.path.isdir(config.SSH_HISTORY_EVENTS_DIR):
+        return
+    with state.ssh_history_lock:
+        for name in os.listdir(config.SSH_HISTORY_EVENTS_DIR):
+            if not name.endswith(".jsonl"):
+                continue
+            try:
+                os.remove(os.path.join(config.SSH_HISTORY_EVENTS_DIR, name))
+            except OSError:
+                pass
+
+
+# ========================
+# SSH HISTORY BUCKETS
+# ========================
+def _save_ssh_history_buckets():
+    if not config.SSH_HISTORY_BUCKETS_PATH:
+        return
+    with state.lock:
+        payload = {
+            "saved_at": int(time.time()),
+            "buckets": [{"ts": int(k), "total": int(v.get("total", 0))}
+                        for k, v in sorted(state.ssh_history_buckets.items())],
+        }
+    try:
+        d = os.path.dirname(config.SSH_HISTORY_BUCKETS_PATH) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = config.SSH_HISTORY_BUCKETS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, config.SSH_HISTORY_BUCKETS_PATH)
+    except OSError:
+        pass
+
+
+def _load_ssh_history_buckets():
+    if not config.SSH_HISTORY_BUCKETS_PATH:
+        return
+    try:
+        with open(config.SSH_HISTORY_BUCKETS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+    with state.lock:
+        state.ssh_history_buckets.clear()
+        for raw in data.get("buckets", []):
+            if not isinstance(raw, dict):
+                continue
+            try:
+                ts = int(raw.get("ts", 0))
+            except (TypeError, ValueError):
+                continue
+            state.ssh_history_buckets[ts] = {"ts": ts, "total": int(raw.get("total", 0) or 0)}
 
 
 # ========================
@@ -756,5 +860,20 @@ def get_storage_stats():
     result["history_events"] = events_sz
     result["history_events_files"] = events_files
     total += events_sz
+
+    ssh_events_dir = config.SSH_HISTORY_EVENTS_DIR
+    ssh_events_sz = 0
+    ssh_events_files = 0
+    if ssh_events_dir and os.path.isdir(ssh_events_dir):
+        for fname in os.listdir(ssh_events_dir):
+            try:
+                ssh_events_sz += os.path.getsize(os.path.join(ssh_events_dir, fname))
+                ssh_events_files += 1
+            except OSError:
+                pass
+    result["ssh_history_events"] = ssh_events_sz
+    result["ssh_history_events_files"] = ssh_events_files
+    total += ssh_events_sz
+
     result["total"] = total
     return result

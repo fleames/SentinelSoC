@@ -100,11 +100,15 @@ if STATE_DIR:
     PARSED_STATE_PATH = os.path.join(STATE_DIR, "parsed-state.json")
     HISTORY_BUCKETS_PATH = os.path.join(STATE_DIR, "history-buckets.json")
     HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "history-events")
+    SSH_HISTORY_BUCKETS_PATH = os.path.join(STATE_DIR, "ssh-history-buckets.json")
+    SSH_HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "ssh-history-events")
 else:
     BEHAVIOR_STATE_PATH = ""
     PARSED_STATE_PATH = ""
     HISTORY_BUCKETS_PATH = ""
     HISTORY_EVENTS_DIR = ""
+    SSH_HISTORY_BUCKETS_PATH = ""
+    SSH_HISTORY_EVENTS_DIR = ""
 
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."

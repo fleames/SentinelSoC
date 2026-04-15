@@ -96,15 +96,29 @@ def _is_login_path(path):
     return path in ("/login", "/wp-login.php", "/wp-login", "/admin", "/admin/login")
 
 
+_STATIC_EXACT = frozenset((
+    "/favicon.ico", "/favicon.svg", "/favicon.png",
+    "/manifest.json", "/manifest.webmanifest", "/site.webmanifest",
+    "/sw.js", "/service-worker.js", "/workbox.js",
+    "/apple-icon", "/apple-touch-icon.png", "/apple-touch-icon",
+    "/robots.txt", "/sitemap.xml",
+))
+
 def _is_static_asset(path):
     """Return True for paths that look like browser-fetched static resources."""
     p = (path or "").lower().split("?")[0]
-    if any(p.startswith(pfx) for pfx in ("/assets/", "/static/", "/_next/", "/dist/", "/_nuxt/", "/build/")):
+    if p in _STATIC_EXACT:
+        return True
+    if any(p.startswith(pfx) for pfx in (
+        "/assets/", "/static/", "/_next/", "/dist/", "/_nuxt/", "/build/",
+        "/locales/",    # i18n translation files
+        "/pwa-icon",    # PWA icons with size suffix
+    )):
         return True
     return p.endswith((
         ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
         ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".webm", ".avif", ".webp",
-        ".map",
+        ".map", ".json",   # covers /locales/*.json and manifest files
     ))
 
 

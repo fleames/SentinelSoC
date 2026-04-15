@@ -174,12 +174,15 @@ def _process_log_event(data, source=""):
             b["status_4xx"] += 1
         elif status >= 500:
             b["status_5xx"] += 1
-        if path_bucket in ("/login", "/signin"):
-            b["login_hits"] += 1
-        if path_bucket in ("/wp-login", "/wp-login.php"):
-            b["wp_login_hits"] += 1
-        if path_bucket.startswith("/admin"):
-            b["admin_hits"] += 1
+        # Only count login/admin pressure on auth failures — normal page visits
+        # (including RSC prefetches returning 200) should not inflate the score.
+        if status in (401, 403):
+            if path_bucket in ("/login", "/signin"):
+                b["login_hits"] += 1
+            if path_bucket in ("/wp-login", "/wp-login.php"):
+                b["wp_login_hits"] += 1
+            if path_bucket.startswith("/admin"):
+                b["admin_hits"] += 1
         if b["last_ua"] and b["last_ua"] != ua_norm:
             b["ua_switches"] += 1
         b["last_ua"] = ua_norm

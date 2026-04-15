@@ -1,14 +1,20 @@
 # ASCII-only source: valid UTF-8 on all platforms.
 """
 sentinel/routes/ingest.py -- /api/ingest and /api/source/remove endpoints.
+
+Events are pushed onto state.ingest_queue and processed asynchronously by
+_ingest_worker in workers.py.  The HTTP handler returns as soon as the raw
+JSON is parsed and enqueued — it does not wait for state mutations.  This
+lets three simultaneous ingest requests from remote servers return in
+microseconds instead of holding open until every event has acquired state.lock.
 """
 import json
+import queue
 import secrets
 
 from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
-from sentinel.events import _process_log_event
 
 bp = Blueprint("ingest", __name__)
 
@@ -18,12 +24,15 @@ def api_ingest():
     """Accept JSONL Caddy access-log events pushed from remote servers.
 
     Authentication: if SENTINEL_INGEST_KEY is set, the request must carry
-    ``Authorization: Bearer <key>``.  If the env var is empty, any caller on
-    the trusted network is accepted (set a firewall rule accordingly).
+    ``Authorization: Bearer <key>``.
 
     Body: one JSON object per line (JSONL / newline-delimited JSON).
     Header: ``X-Sentinel-Source`` names the remote source (shown in the
     Log Sources card).  Defaults to the caller's remote address.
+
+    Returns immediately after enqueuing; actual processing is async.
+    Response key ``ingested`` reflects events successfully queued (kept for
+    backward-compatibility with remote ingest scripts).
     """
     if config.INGEST_KEY:
         auth_header = request.headers.get("Authorization", "")
@@ -42,7 +51,7 @@ def api_ingest():
     if not body:
         return jsonify({"ok": True, "ingested": 0, "skipped": 0})
 
-    ingested = 0
+    queued = 0
     skipped = 0
     for raw_line in body.splitlines():
         raw_line = raw_line.strip()
@@ -56,13 +65,13 @@ def api_ingest():
         if not isinstance(obj, dict):
             skipped += 1
             continue
-        result = _process_log_event(obj, source=source)
-        if result == "ok":
-            ingested += 1
-        else:
+        try:
+            state.ingest_queue.put_nowait((source, obj))
+            queued += 1
+        except queue.Full:
             skipped += 1
 
-    return jsonify({"ok": True, "ingested": ingested, "skipped": skipped})
+    return jsonify({"ok": True, "ingested": queued, "skipped": skipped})
 
 
 @bp.route("/api/source/remove", methods=["POST"])

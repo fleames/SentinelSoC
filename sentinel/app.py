@@ -50,7 +50,7 @@ def create_app():
 
 def start_background_threads(app):
     from sentinel.geo import geo_worker
-    from sentinel.workers import reset, stream, _state_flush_worker
+    from sentinel.workers import reset, stream, _state_flush_worker, _ingest_worker
     from sentinel.botnet import botnet_detection_worker
     from sentinel.persistence import _sync_iptables_bans
 
@@ -65,6 +65,7 @@ def start_background_threads(app):
     threading.Thread(target=reset, daemon=True).start()
     threading.Thread(target=botnet_detection_worker, daemon=True).start()
     threading.Thread(target=_state_flush_worker, daemon=True).start()
+    threading.Thread(target=_ingest_worker, daemon=True).start()
 
     from sentinel.reputation import reputation_worker
     for _ in range(config.REPUTATION_WORKERS):

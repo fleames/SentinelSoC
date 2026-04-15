@@ -203,3 +203,28 @@ def _state_flush_worker():
             _prune_history_event_files()
         except Exception:
             pass
+
+
+def _ingest_worker():
+    """Drain state.ingest_queue and call _process_log_event sequentially.
+
+    Decoupling HTTP receipt from state mutation means:
+    - /api/ingest returns as soon as events are enqueued (microseconds)
+    - All three remote ingest servers can post concurrently without contention
+    - state.lock is only ever held by this one thread, so zero lock contention
+    """
+    import queue as _queue
+    while True:
+        # Block until at least one item arrives
+        try:
+            source, obj = state.ingest_queue.get(timeout=0.05)
+        except _queue.Empty:
+            continue
+        _process_log_event(obj, source=source)
+        # Drain all remaining items without blocking (burst handling)
+        while True:
+            try:
+                source, obj = state.ingest_queue.get_nowait()
+                _process_log_event(obj, source=source)
+            except _queue.Empty:
+                break

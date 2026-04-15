@@ -3,6 +3,7 @@
 sentinel/state.py -- All shared mutable state objects.
 Imports only sentinel.config and stdlib.
 """
+import queue
 import threading
 from collections import Counter, defaultdict, deque
 
@@ -54,6 +55,11 @@ pending_geo_hits = defaultdict(int)
 
 lock = threading.Lock()
 audit_lock = threading.Lock()
+
+# Ingest queue: (source, dict) tuples pushed by /api/ingest, drained by _ingest_worker.
+# Decouples HTTP receipt from state mutation — requests return immediately, worker
+# serialises all _process_log_event calls so state.lock sees zero contention.
+ingest_queue = queue.Queue(maxsize=200_000)
 
 # Tail thread only; exposed in /data for debugging parse path vs dashboard total.
 stream_parse_debug = {

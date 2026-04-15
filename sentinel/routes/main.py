@@ -159,6 +159,7 @@ def data():
             "ingest_enabled": True,
             "sources": sources_snapshot,
             "stream_parse_debug": stream_parse_debug_snapshot,
+            "ingest_queue_depth": state.ingest_queue.qsize(),
             "ip_tags": ip_tags_payload,
             "fingerprint_stats": {
                 "unique": fp_unique,

@@ -29,6 +29,7 @@ let historyPage=1;
 let historyTotal=0;
 let historySelectedDay='';
 let historyDaysLoaded=false;
+let currentBannedSet=new Set();
 
 /* Tab visibility for alert count */
 document.addEventListener('visibilitychange',function(){
@@ -1149,6 +1150,7 @@ async function load(force){
     d=await res.json();
   }catch(e){ return; }
   lastPayload=d;
+  currentBannedSet=new Set(d.banned_ips||[]);
   lastLoadMs=Date.now();
 
   var ab=document.getElementById('authBadge');
@@ -1450,9 +1452,13 @@ function renderAudit(entries){
     var ts=e.ts?(e.ts.replace('T',' ').replace(/\.[0-9]+([+-][0-9][0-9]:[0-9][0-9]|Z)?$/,'').replace('+00:00','')+' UTC'):'';
     var col=ACTION_COLOR[e.action]||'var(--accent)';
     var targetIp=(e.detail&&e.detail.ip)||(e.action==='auth_failed'?(e.remote||''):'');
+    var isBanned=targetIp&&currentBannedSet.has(targetIp);
     var banBtn=targetIp
       ? '<span class="audit-ban-wrap" style="display:inline-flex;gap:4px;align-items:center;flex-shrink:0;margin-left:4px">'
-        +'<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Mute</button>'
+        +(isBanned
+          ? '<button type="button" class="toolbtn audit-unban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Unmute</button>'
+          : '<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Mute</button>'
+        )
         +'</span>'
       : '';
     html+='<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:5px 10px">'
@@ -1549,8 +1555,28 @@ document.addEventListener('click',async function(e){
     var wrap=cancelBtn.closest('.audit-ban-wrap');
     if(wrap){
       var ip=wrap.querySelector('.audit-ban-confirm')?wrap.querySelector('.audit-ban-confirm').dataset.ip:'';
-      if(ip) wrap.innerHTML='<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Mute</button>';
+      if(ip){
+        var isBanned=currentBannedSet.has(ip);
+        wrap.innerHTML=isBanned
+          ?'<button type="button" class="toolbtn audit-unban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Unmute</button>'
+          :'<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Mute</button>';
+      }
     }
+    return;
+  }
+
+  /* Unmute from audit log row */
+  var unbanBtn=e.target.closest('.audit-unban-btn');
+  if(unbanBtn&&unbanBtn.dataset.ip){
+    var ip=unbanBtn.dataset.ip;
+    try{
+      var r=await fetch('/api/unban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+      var j=await r.json().catch(function(){return{};});
+      if(!r.ok){alert(j.error||'Unmute failed');return;}
+      warnIptables(j);
+      await load(true);
+      await loadAudit(true);
+    }catch(err){alert('Unmute failed');}
     return;
   }
 

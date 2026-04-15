@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 # ASCII-only source: valid UTF-8 on all platforms.
 """
-sentinel_ssh_ingest.py -- Tail /var/log/auth.log and forward SSH auth
-failures to Sentinel's /api/ingest endpoint as synthetic HTTP events.
+sentinel_ssh_ingest.py -- Forward SSH auth failures to Sentinel's /api/ingest
+endpoint as synthetic Caddy-format HTTP events.
+
+Two source modes (auto-detected, or forced via SSH_SOURCE env var):
+  journal   -- read from systemd journal via `journalctl` (no auth.log needed,
+               works even when rsyslog is down or disk is full writing logs)
+  file      -- tail SSH_LOG_PATH (default: /var/log/auth.log)
+
+Auto-detection: uses journal mode if journalctl is available AND auth.log is
+missing or SSH_SOURCE=journal is set; otherwise falls back to file mode.
 
 Each SSH failure becomes a flat Caddy-format JSON event:
   - remote_ip / client_ip = attacker IP
   - uri = /ssh, status = 401
   - User-Agent = SSH-client/<username> (for UA-based signals)
 
-This feeds the existing scoring rules:
-  - ssh_bruteforce rule: +8 per event
-  - bruteforce tag: fires after BRUTEFORCE_MIN_HITS failures in window
-  - error_probe tag: fires when 4xx rate is high
-  - scanner / persistent tags: fire as normal
-
 Environment variables:
   SENTINEL_URL          Base URL of Sentinel (default: http://127.0.0.1:5000)
   SENTINEL_INGEST_KEY   Bearer token (must match SENTINEL_INGEST_KEY in Sentinel)
-  SSH_LOG_PATH          Log to tail (default: /var/log/auth.log)
+  SSH_SOURCE            Force source mode: "journal" or "file"
+  SSH_LOG_PATH          Log to tail in file mode (default: /var/log/auth.log)
   SSH_BATCH_SIZE        Max events per POST request (default: 20)
   SSH_FLUSH_INTERVAL    Seconds between batch flushes (default: 5)
 """
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -36,28 +40,22 @@ INGEST_KEY      = os.environ.get("SENTINEL_INGEST_KEY",  "").strip()
 LOG_PATH        = os.environ.get("SSH_LOG_PATH",         "/var/log/auth.log")
 BATCH_SIZE      = int(os.environ.get("SSH_BATCH_SIZE",   "20"))
 FLUSH_INTERVAL  = float(os.environ.get("SSH_FLUSH_INTERVAL", "5"))
+SSH_SOURCE      = os.environ.get("SSH_SOURCE", "").strip().lower()  # "journal" | "file" | ""
+
 
 # ---------------------------------------------------------------------------
-# Auth.log patterns
+# SSH log line patterns (used for both file and journal MESSAGE field)
 # ---------------------------------------------------------------------------
 
-# Lines that include both a username and an IP address.
 _FAIL_RE = [
-    # Failed password for [invalid user] <user> from <ip> port <port> ssh2
     re.compile(r"Failed (?:password|publickey) for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)"),
-    # Invalid user <user> from <ip>
     re.compile(r"Invalid user (\S+) from ([\da-fA-F:.]+)"),
-    # Disconnected from [invalid|authenticating] user <user> <ip> port
     re.compile(r"Disconnected from (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port"),
-    # Connection closed by [invalid|authenticating] user <user> <ip> port
     re.compile(r"Connection closed by (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port"),
-    # maximum authentication attempts exceeded for [invalid user] <user> from <ip>
     re.compile(r"maximum authentication attempts exceeded for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)"),
-    # error: kex_exchange_identification: ... from <user>@<ip>
     re.compile(r"kex_exchange_identification.*from (\S+)@([\da-fA-F:.]+)"),
 ]
 
-# Lines that only expose an IP (no username).
 _IP_ONLY_RE = [
     re.compile(r"Did not receive identification string from ([\da-fA-F:.]+)"),
     re.compile(r"Bad protocol version identification .{0,80} from ([\da-fA-F:.]+)"),
@@ -68,17 +66,13 @@ _IP_ONLY_RE = [
 
 
 def _parse_line(line):
-    """
-    Return (ip, username_or_None) for SSH failure lines, None otherwise.
-    Only processes lines containing 'sshd'.
-    """
-    if "sshd" not in line:
+    """Return (ip, user_or_None) for SSH failure lines, None otherwise."""
+    if "sshd" not in line and "ssh" not in line.lower():
         return None
     for pat in _FAIL_RE:
         m = pat.search(line)
         if m:
-            user, ip = m.group(1), m.group(2)
-            return ip, user
+            return m.group(2), m.group(1)
     for pat in _IP_ONLY_RE:
         m = pat.search(line)
         if m:
@@ -91,10 +85,6 @@ def _parse_line(line):
 # ---------------------------------------------------------------------------
 
 def _make_event(ip, user=None):
-    """
-    Build a synthetic flat Caddy-format event for one SSH auth failure.
-    Accepted by _parse_caddy_access_line's flat-format path (msg='handled request').
-    """
     ua = f"SSH-client/{user}" if user else "SSH-client"
     return {
         "msg":       "handled request",
@@ -125,14 +115,14 @@ def _post_batch(events):
         data=body,
         method="POST",
         headers={
-            "Content-Type":     "application/x-ndjson",
+            "Content-Type":      "application/x-ndjson",
             "X-Sentinel-Source": "ssh",
         },
     )
     if INGEST_KEY:
         req.add_header("Authorization", f"Bearer {INGEST_KEY}")
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
             ingested = result.get("ingested", "?")
             print(f"[ssh-ingest] flushed {len(events)} events ({ingested} ingested)", flush=True)
@@ -143,10 +133,49 @@ def _post_batch(events):
 
 
 # ---------------------------------------------------------------------------
-# Log tailer (handles rotation via inode check)
+# Source: journalctl (no auth.log needed)
 # ---------------------------------------------------------------------------
 
-def _tail(path):
+def _lines_from_journal():
+    """Yield SSH log lines from systemd journal. Requires journalctl."""
+    print("[ssh-ingest] reading from systemd journal (journalctl mode)", flush=True)
+    cmd = ["journalctl", "-u", "sshd", "-u", "ssh", "-f", "-o", "json", "-n", "0"]
+    while True:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+            for raw in proc.stdout:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                    msg = entry.get("MESSAGE") or ""
+                    if isinstance(msg, list):
+                        msg = "".join(chr(b) if isinstance(b, int) else b for b in msg)
+                    if msg:
+                        yield msg
+                except (json.JSONDecodeError, ValueError):
+                    continue
+            proc.wait()
+        except FileNotFoundError:
+            print("[ssh-ingest] journalctl not found, switching to file mode", file=sys.stderr, flush=True)
+            return
+        except Exception as exc:
+            print(f"[ssh-ingest] journal error: {exc}", file=sys.stderr, flush=True)
+        time.sleep(3)
+
+
+# ---------------------------------------------------------------------------
+# Source: auth.log file tail (handles rotation via inode check)
+# ---------------------------------------------------------------------------
+
+def _lines_from_file(path):
     """Yield lines from a growing log file. Re-opens on rotation."""
     f = None
     inode = None
@@ -192,19 +221,43 @@ def _tail(path):
 
 
 # ---------------------------------------------------------------------------
+# Source selection
+# ---------------------------------------------------------------------------
+
+def _choose_source():
+    if SSH_SOURCE == "journal":
+        return "journal"
+    if SSH_SOURCE == "file":
+        return "file"
+    # Auto-detect: prefer journal if auth.log is missing
+    if not os.path.exists(LOG_PATH):
+        import shutil
+        if shutil.which("journalctl"):
+            return "journal"
+    return "file"
+
+
+def _line_source(mode):
+    if mode == "journal":
+        return _lines_from_journal()
+    return _lines_from_file(LOG_PATH)
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
+    mode = _choose_source()
     print(
-        f"[ssh-ingest] starting  log={LOG_PATH}  sentinel={SENTINEL_URL}"
+        f"[ssh-ingest] starting  mode={mode}  sentinel={SENTINEL_URL}"
         f"  batch={BATCH_SIZE}  flush_interval={FLUSH_INTERVAL}s",
         flush=True,
     )
     batch = []
     last_flush = time.time()
 
-    for line in _tail(LOG_PATH):
+    for line in _line_source(mode):
         parsed = _parse_line(line)
         if parsed:
             ip, user = parsed

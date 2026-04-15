@@ -1,0 +1,35 @@
+[Unit]
+Description=Sentinel SSH Auth Log Ingest (remote)
+Documentation=https://github.com/fleames/SentinelSoC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Put SENTINEL_URL and SENTINEL_INGEST_KEY in /opt/sentinel/.env:
+#   SENTINEL_URL=http://<sentinel-server-ip>:5000
+#   SENTINEL_INGEST_KEY=your-key-here
+EnvironmentFile=/opt/sentinel/.env
+
+# Override any of these defaults in the EnvironmentFile above:
+# SSH_SOURCE=journal  uses systemd journal directly (no auth.log needed)
+# SSH_SOURCE=file     tails SSH_LOG_PATH (default)
+# leave unset for auto-detection
+Environment="SSH_LOG_PATH=/var/log/auth.log"
+Environment="SSH_BATCH_SIZE=20"
+Environment="SSH_FLUSH_INTERVAL=5"
+
+ExecStart=/usr/bin/python3 /opt/sentinel/sentinel_ssh_ingest.py
+
+Restart=on-failure
+RestartSec=15
+
+User=root
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-ssh
+
+[Install]
+WantedBy=multi-user.target

@@ -86,10 +86,13 @@ DETECTION_RULES = [
     {
         "name": "sensitive_path",
         "match": lambda e: any(x in (e.get("uri") or "").lower() for x in (
-            ".env", ".git", "wp-admin", "xmlrpc", "phpmyadmin", "adminer",
-            ".aws", "credentials", "shell", "eval-stdin", "boaform", "cgi-bin",
-            "/actuator", "/api/v1/pods", "/.ds_store", "/server-status",
-            "/config/", "/backup", "/.git/", "/.svn/", "/debug",
+            ".env", ".git", "wp-admin", "wp-login", "xmlrpc", "wlwmanifest",
+            "phpmyadmin", "adminer", ".aws", "credentials", "shell",
+            "eval-stdin", "boaform", "cgi-bin", "/actuator", "/api/v1/pods",
+            "/.ds_store", "/server-status", "/config/", "/backup",
+            "/.git/", "/.svn/", "/debug", "/passwd", "/shadow",
+            "/.well-known/acme-challenge", "/telescope", "/vendor/phpunit",
+            "/muieblackcat", "/GponForm", "/setup.cgi",
         )),
         "score": 10,
     },

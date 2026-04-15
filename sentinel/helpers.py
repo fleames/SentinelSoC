@@ -131,29 +131,29 @@ def _behavior_bonus(ip, ua_key, path):
 
     # -- Group 1: existing signals, now also tag the IP --
 
-    if uniq_n >= 20 and req_n <= 60 and win_s <= 180:
+    if uniq_n >= config.SCANNER_MIN_PATHS and req_n <= config.SCANNER_MAX_REQS and win_s <= config.SCANNER_WINDOW_S:
         bonus += 8
         state.behavior_signal_counts["scanner"] += 1
         state.ip_tags[ip].add("scanner")
 
     login_pressure = b["login_hits"] + b["wp_login_hits"] + b["admin_hits"]
-    if login_pressure >= 8 and win_s <= 240:
+    if login_pressure >= config.BRUTEFORCE_MIN_HITS and win_s <= config.BRUTEFORCE_WINDOW_S:
         bonus += 6
         state.behavior_signal_counts["bruteforce"] += 1
         state.ip_tags[ip].add("bruteforce")
 
-    if req_n >= 15 and b["status_4xx"] / max(1, req_n) >= 0.6:
+    if req_n >= config.ERROR_PROBE_MIN_REQS and b["status_4xx"] / max(1, req_n) >= config.ERROR_PROBE_4XX_RATE:
         bonus += 5
         state.behavior_signal_counts["error_probe"] += 1
         state.ip_tags[ip].add("error_probe")
 
     ua_spread = len(state.ua_to_ips.get(ua_key, ()))
-    if ua_key and ua_key != "-" and ua_spread >= 8:
+    if ua_key and ua_key != "-" and ua_spread >= config.SHARED_UA_MIN_IPS:
         bonus += 4
         state.behavior_signal_counts["shared_ua_many_ips"] += 1
         state.ip_tags[ip].add("shared_ua")
 
-    if b["ua_switches"] >= 6 and req_n <= 80 and win_s <= 300:
+    if b["ua_switches"] >= config.UA_ROTATION_MIN_SWITCHES and req_n <= config.UA_ROTATION_MAX_REQS and win_s <= config.UA_ROTATION_WINDOW_S:
         bonus += 5
         state.behavior_signal_counts["ip_ua_rotation"] += 1
         state.ip_tags[ip].add("ua_rotation")
@@ -164,33 +164,33 @@ def _behavior_bonus(ip, ua_key, path):
     # -- Group 2: new signals from existing state --
 
     # Server error probe: repeated 5xx responses suggest backend vulnerability scanning.
-    if req_n >= 10 and b["status_5xx"] / max(1, req_n) >= 0.3:
+    if req_n >= config.SERVER_ERROR_MIN_REQS and b["status_5xx"] / max(1, req_n) >= config.SERVER_ERROR_5XX_RATE:
         bonus += 4
         state.behavior_signal_counts["server_error_probe"] += 1
         state.ip_tags[ip].add("server_error_probe")
 
     # Flood: very high request rate in a short burst window.
-    if req_n >= 200 and win_s <= 60:
+    if req_n >= config.FLOOD_REQ_THRESHOLD and win_s <= config.FLOOD_WINDOW_S:
         bonus += 6
         state.behavior_signal_counts["flood"] += 1
         state.ip_tags[ip].add("flood")
 
     # Headless automation: majority of requests carry no Referer header.
     no_ref = b.get("no_ref_hits", 0)
-    if req_n >= 30 and no_ref / max(1, req_n) >= 0.7:
+    if req_n >= config.HEADLESS_MIN_REQS and no_ref / max(1, req_n) >= config.HEADLESS_NO_REF_RATE:
         bonus += 3
         state.behavior_signal_counts["headless"] += 1
         state.ip_tags[ip].add("headless")
 
     # Multi-host scan: same IP probing several distinct virtual hosts.
     host_count = len(state.ip_hosts.get(ip, ()))
-    if host_count >= 4:
+    if host_count >= config.MULTI_HOST_THRESHOLD:
         bonus += 5
         state.behavior_signal_counts["multi_host"] += 1
         state.ip_tags[ip].add("multi_host")
 
     # Empty UA: consistently no user-agent string.
-    if req_n >= 10 and (not ua_key or ua_key == "-"):
+    if req_n >= config.EMPTY_UA_MIN_REQS and (not ua_key or ua_key == "-"):
         bonus += 2
         state.behavior_signal_counts["empty_ua"] += 1
         state.ip_tags[ip].add("empty_ua")

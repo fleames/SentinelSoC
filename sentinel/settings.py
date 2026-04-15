@@ -80,6 +80,121 @@ SCHEMA = {
         "desc": "Minimum unique non-static paths visited before slow-and-low is considered.",
         "group": "Behavior",
     },
+    # --- Signal thresholds ---
+    "SCANNER_MIN_PATHS": {
+        "type": "int", "min": 5, "max": 500,
+        "label": "Scanner: min unique paths",
+        "desc": "Unique non-static paths an IP must request to be tagged 'scanner'.",
+        "group": "Signals",
+    },
+    "SCANNER_MAX_REQS": {
+        "type": "int", "min": 10, "max": 500,
+        "label": "Scanner: max total requests",
+        "desc": "Upper bound on total requests for scanner detection (high-path, low-volume pattern).",
+        "group": "Signals",
+    },
+    "SCANNER_WINDOW_S": {
+        "type": "int", "min": 30, "max": 3600,
+        "label": "Scanner: detection window (seconds)",
+        "desc": "Time window in which the scanner path/request pattern must occur.",
+        "group": "Signals",
+    },
+    "BRUTEFORCE_MIN_HITS": {
+        "type": "int", "min": 2, "max": 100,
+        "label": "Bruteforce: min auth hits",
+        "desc": "Minimum combined login/wp-login/admin failures to tag an IP as 'bruteforce'.",
+        "group": "Signals",
+    },
+    "BRUTEFORCE_WINDOW_S": {
+        "type": "int", "min": 30, "max": 3600,
+        "label": "Bruteforce: detection window (seconds)",
+        "desc": "Time window in which bruteforce hits must accumulate.",
+        "group": "Signals",
+    },
+    "ERROR_PROBE_MIN_REQS": {
+        "type": "int", "min": 5, "max": 200,
+        "label": "Error probe: min requests",
+        "desc": "Minimum total requests before 4xx rate is evaluated for error probe detection.",
+        "group": "Signals",
+    },
+    "ERROR_PROBE_4XX_RATE": {
+        "type": "float", "min": 0.1, "max": 1.0,
+        "label": "Error probe: 4xx rate threshold",
+        "desc": "Fraction of requests returning 4xx required to tag an IP as 'error_probe'.",
+        "group": "Signals",
+    },
+    "SHARED_UA_MIN_IPS": {
+        "type": "int", "min": 2, "max": 100,
+        "label": "Shared UA: min distinct IPs",
+        "desc": "Number of distinct IPs that must share the same user-agent to fire 'shared_ua'.",
+        "group": "Signals",
+    },
+    "UA_ROTATION_MIN_SWITCHES": {
+        "type": "int", "min": 2, "max": 50,
+        "label": "UA rotation: min switches",
+        "desc": "Minimum number of user-agent changes within the window to tag 'ua_rotation'.",
+        "group": "Signals",
+    },
+    "UA_ROTATION_MAX_REQS": {
+        "type": "int", "min": 10, "max": 500,
+        "label": "UA rotation: max total requests",
+        "desc": "Upper bound on total requests for UA rotation detection.",
+        "group": "Signals",
+    },
+    "UA_ROTATION_WINDOW_S": {
+        "type": "int", "min": 30, "max": 3600,
+        "label": "UA rotation: detection window (seconds)",
+        "desc": "Time window in which UA switches must occur.",
+        "group": "Signals",
+    },
+    "SERVER_ERROR_MIN_REQS": {
+        "type": "int", "min": 5, "max": 200,
+        "label": "Server error probe: min requests",
+        "desc": "Minimum requests before 5xx rate is checked for server_error_probe.",
+        "group": "Signals",
+    },
+    "SERVER_ERROR_5XX_RATE": {
+        "type": "float", "min": 0.1, "max": 1.0,
+        "label": "Server error probe: 5xx rate threshold",
+        "desc": "Fraction of requests returning 5xx to tag an IP as 'server_error_probe'.",
+        "group": "Signals",
+    },
+    "FLOOD_REQ_THRESHOLD": {
+        "type": "int", "min": 50, "max": 10000,
+        "label": "Flood: request threshold",
+        "desc": "Minimum requests within the flood window to tag an IP as 'flood'.",
+        "group": "Signals",
+    },
+    "FLOOD_WINDOW_S": {
+        "type": "int", "min": 5, "max": 300,
+        "label": "Flood: detection window (seconds)",
+        "desc": "Time window used for flood rate detection.",
+        "group": "Signals",
+    },
+    "HEADLESS_MIN_REQS": {
+        "type": "int", "min": 5, "max": 200,
+        "label": "Headless: min requests",
+        "desc": "Minimum requests before no-Referer rate is evaluated for headless detection.",
+        "group": "Signals",
+    },
+    "HEADLESS_NO_REF_RATE": {
+        "type": "float", "min": 0.1, "max": 1.0,
+        "label": "Headless: no-Referer rate threshold",
+        "desc": "Fraction of requests with no Referer header to tag an IP as 'headless'.",
+        "group": "Signals",
+    },
+    "MULTI_HOST_THRESHOLD": {
+        "type": "int", "min": 2, "max": 50,
+        "label": "Multi-host: distinct host threshold",
+        "desc": "Number of distinct virtual hosts an IP must hit to be tagged 'multi_host'.",
+        "group": "Signals",
+    },
+    "EMPTY_UA_MIN_REQS": {
+        "type": "int", "min": 2, "max": 200,
+        "label": "Empty UA: min requests",
+        "desc": "Minimum requests with an empty user-agent before the 'empty_ua' tag fires.",
+        "group": "Signals",
+    },
     # --- Botnet ---
     "BOTNET_WINDOW_S": {
         "type": "int", "min": 60, "max": 3600,
@@ -205,7 +320,7 @@ def get_all():
             entry["max"] = meta["max"]
         groups.setdefault(meta["group"], []).append(entry)
     # Return as ordered list of {group, settings}
-    order = ["Detection", "Behavior", "Botnet", "Enrichment", "History", "Alerts"]
+    order = ["Detection", "Behavior", "Signals", "Botnet", "Enrichment", "History", "Alerts"]
     result = []
     for g in order:
         if g in groups:
@@ -227,6 +342,25 @@ def _get_env_default(key):
         "TLS_FP_SHARED_THRESHOLD":     ("SENTINEL_TLS_FP_THRESHOLD", "5", int),
         "SLOW_LOW_MIN_HOURS":          ("SENTINEL_SLOW_LOW_MIN_HOURS", "2", float),
         "SLOW_LOW_MIN_PATHS":          ("SENTINEL_SLOW_LOW_MIN_PATHS", "15", int),
+        "SCANNER_MIN_PATHS":           ("SENTINEL_SCANNER_MIN_PATHS",  "20", int),
+        "SCANNER_MAX_REQS":            ("SENTINEL_SCANNER_MAX_REQS",   "60", int),
+        "SCANNER_WINDOW_S":            ("SENTINEL_SCANNER_WINDOW_S",   "180", int),
+        "BRUTEFORCE_MIN_HITS":         ("SENTINEL_BRUTEFORCE_MIN_HITS","8",  int),
+        "BRUTEFORCE_WINDOW_S":         ("SENTINEL_BRUTEFORCE_WINDOW_S","240",int),
+        "ERROR_PROBE_MIN_REQS":        ("SENTINEL_ERROR_PROBE_MIN_REQS","15",int),
+        "ERROR_PROBE_4XX_RATE":        ("SENTINEL_ERROR_PROBE_4XX_RATE","0.6",float),
+        "SHARED_UA_MIN_IPS":           ("SENTINEL_SHARED_UA_MIN_IPS",  "8",  int),
+        "UA_ROTATION_MIN_SWITCHES":    ("SENTINEL_UA_ROTATION_MIN_SWITCHES","6",int),
+        "UA_ROTATION_MAX_REQS":        ("SENTINEL_UA_ROTATION_MAX_REQS","80", int),
+        "UA_ROTATION_WINDOW_S":        ("SENTINEL_UA_ROTATION_WINDOW_S","300",int),
+        "SERVER_ERROR_MIN_REQS":       ("SENTINEL_SERVER_ERROR_MIN_REQS","10",int),
+        "SERVER_ERROR_5XX_RATE":       ("SENTINEL_SERVER_ERROR_5XX_RATE","0.3",float),
+        "FLOOD_REQ_THRESHOLD":         ("SENTINEL_FLOOD_REQ_THRESHOLD", "200",int),
+        "FLOOD_WINDOW_S":              ("SENTINEL_FLOOD_WINDOW_S",      "60", int),
+        "HEADLESS_MIN_REQS":           ("SENTINEL_HEADLESS_MIN_REQS",   "30", int),
+        "HEADLESS_NO_REF_RATE":        ("SENTINEL_HEADLESS_NO_REF_RATE","0.7",float),
+        "MULTI_HOST_THRESHOLD":        ("SENTINEL_MULTI_HOST_THRESHOLD","4",  int),
+        "EMPTY_UA_MIN_REQS":           ("SENTINEL_EMPTY_UA_MIN_REQS",   "10", int),
         "BOTNET_WINDOW_S":             None,
         "BOTNET_CHECK_INTERVAL":       None,
         "BOTNET_MIN_IPS":              None,

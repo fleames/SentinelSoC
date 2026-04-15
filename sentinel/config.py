@@ -131,3 +131,42 @@ TLS_FP_SHARED_THRESHOLD = int(os.environ.get("SENTINEL_TLS_FP_THRESHOLD", "5") o
 SLOW_LOW_MIN_HOURS = float(os.environ.get("SENTINEL_SLOW_LOW_MIN_HOURS", "2") or "2")
 # Minimum unique non-static paths visited before flagging.
 SLOW_LOW_MIN_PATHS = int(os.environ.get("SENTINEL_SLOW_LOW_MIN_PATHS", "15") or "15")
+
+# Scanner detection thresholds.
+SCANNER_MIN_PATHS  = int(os.environ.get("SENTINEL_SCANNER_MIN_PATHS",  "20")  or "20")
+SCANNER_MAX_REQS   = int(os.environ.get("SENTINEL_SCANNER_MAX_REQS",   "60")  or "60")
+SCANNER_WINDOW_S   = int(os.environ.get("SENTINEL_SCANNER_WINDOW_S",   "180") or "180")
+
+# Brute-force detection thresholds.
+BRUTEFORCE_MIN_HITS = int(os.environ.get("SENTINEL_BRUTEFORCE_MIN_HITS", "8")   or "8")
+BRUTEFORCE_WINDOW_S = int(os.environ.get("SENTINEL_BRUTEFORCE_WINDOW_S", "240") or "240")
+
+# Error probe: minimum requests and 4xx rate to fire.
+ERROR_PROBE_MIN_REQS  = int(os.environ.get("SENTINEL_ERROR_PROBE_MIN_REQS",  "15") or "15")
+ERROR_PROBE_4XX_RATE  = float(os.environ.get("SENTINEL_ERROR_PROBE_4XX_RATE", "0.6") or "0.6")
+
+# Flood: >= N requests inside a sliding window.
+FLOOD_REQ_THRESHOLD = int(os.environ.get("SENTINEL_FLOOD_REQ_THRESHOLD", "200") or "200")
+FLOOD_WINDOW_S      = int(os.environ.get("SENTINEL_FLOOD_WINDOW_S",      "60")  or "60")
+
+# Headless automation: minimum requests before no-referer rate is checked.
+HEADLESS_MIN_REQS    = int(os.environ.get("SENTINEL_HEADLESS_MIN_REQS",    "30")  or "30")
+HEADLESS_NO_REF_RATE = float(os.environ.get("SENTINEL_HEADLESS_NO_REF_RATE", "0.7") or "0.7")
+
+# Multi-host scan: minimum distinct virtual hosts from one IP.
+MULTI_HOST_THRESHOLD = int(os.environ.get("SENTINEL_MULTI_HOST_THRESHOLD", "4") or "4")
+
+# Empty UA: minimum requests before the tag fires.
+EMPTY_UA_MIN_REQS = int(os.environ.get("SENTINEL_EMPTY_UA_MIN_REQS", "10") or "10")
+
+# Shared UA: minimum IPs sharing the same user-agent string.
+SHARED_UA_MIN_IPS = int(os.environ.get("SENTINEL_SHARED_UA_MIN_IPS", "8") or "8")
+
+# UA rotation: minimum switches, max reqs, and window.
+UA_ROTATION_MIN_SWITCHES = int(os.environ.get("SENTINEL_UA_ROTATION_MIN_SWITCHES", "6")   or "6")
+UA_ROTATION_MAX_REQS     = int(os.environ.get("SENTINEL_UA_ROTATION_MAX_REQS",     "80")  or "80")
+UA_ROTATION_WINDOW_S     = int(os.environ.get("SENTINEL_UA_ROTATION_WINDOW_S",     "300") or "300")
+
+# Server error probe: minimum requests and 5xx rate.
+SERVER_ERROR_MIN_REQS  = int(os.environ.get("SENTINEL_SERVER_ERROR_MIN_REQS",  "10")  or "10")
+SERVER_ERROR_5XX_RATE  = float(os.environ.get("SENTINEL_SERVER_ERROR_5XX_RATE", "0.3") or "0.3")

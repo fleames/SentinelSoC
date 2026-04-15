@@ -212,19 +212,52 @@ def _ingest_worker():
     - /api/ingest returns as soon as events are enqueued (microseconds)
     - All three remote ingest servers can post concurrently without contention
     - state.lock is only ever held by this one thread, so zero lock contention
+
+    Logs a summary line after each burst so you can watch progress with:
+      journalctl -u sentinel -f
+      python sentinel_soc.py   (stdout/stderr)
     """
     import queue as _queue
+    from collections import Counter as _Counter
+
+    print("[ingest-worker] started", flush=True)
+
     while True:
         # Block until at least one item arrives
         try:
             source, obj = state.ingest_queue.get(timeout=0.05)
         except _queue.Empty:
             continue
-        _process_log_event(obj, source=source)
-        # Drain all remaining items without blocking (burst handling)
+
+        # Drain the whole burst, tracking counts per source
+        t0 = time.time()
+        per_source = _Counter()
+        ok = skipped = 0
+
+        def _process_one(src, ev):
+            nonlocal ok, skipped
+            result = _process_log_event(ev, source=src)
+            if result == "ok":
+                ok += 1
+                per_source[src] += 1
+            else:
+                skipped += 1
+
+        _process_one(source, obj)
         while True:
             try:
                 source, obj = state.ingest_queue.get_nowait()
-                _process_log_event(obj, source=source)
+                _process_one(source, obj)
             except _queue.Empty:
                 break
+
+        elapsed_ms = (time.time() - t0) * 1000
+        depth = state.ingest_queue.qsize()
+        src_summary = "  ".join(f"{s}={n}" for s, n in per_source.most_common())
+        skip_str = f"  skipped={skipped}" if skipped else ""
+        depth_str = f"  queue={depth}" if depth else ""
+        print(
+            f"[ingest-worker] +{ok} events in {elapsed_ms:.1f}ms"
+            f"  [{src_summary}]{skip_str}{depth_str}",
+            flush=True,
+        )

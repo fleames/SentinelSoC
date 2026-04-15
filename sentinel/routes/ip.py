@@ -33,8 +33,40 @@ def api_ip():
                 "geo": state.ip_geo.get(ip, {}),
                 "paths": [[p, int(c)] for p, c in path_rows_list],
                 "tags": sorted(state.ip_tags.get(ip, ())),
+                "note": state.ip_notes.get(ip, ""),
+                "category": state.ip_categories.get(ip, ""),
             }
         )
+
+
+@bp.route("/api/ip/note", methods=["POST"])
+def api_ip_note():
+    data = request.json or {}
+    ip = str(data.get("ip", "")).strip()
+    note = str(data.get("note", "")).strip()[:2000]
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+    with state.lock:
+        if note:
+            state.ip_notes[ip] = note
+        else:
+            state.ip_notes.pop(ip, None)
+    return jsonify({"ok": True, "ip": ip, "note": note})
+
+
+@bp.route("/api/ip/category", methods=["POST"])
+def api_ip_category():
+    data = request.json or {}
+    ip = str(data.get("ip", "")).strip()
+    category = str(data.get("category", "")).strip()[:60]
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+    with state.lock:
+        if category:
+            state.ip_categories[ip] = category
+        else:
+            state.ip_categories.pop(ip, None)
+    return jsonify({"ok": True, "ip": ip, "category": category})
 
 
 @bp.route("/api/ipenrich")

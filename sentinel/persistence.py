@@ -321,6 +321,8 @@ def _save_parsed_state():
                 for fp, ips in state.ssh_key_fp_ips.items()
             },
             "ssh_actor_labels": dict(state.ssh_actor_labels),
+            "ip_notes": dict(state.ip_notes),
+            "ip_categories": dict(state.ip_categories),
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -499,6 +501,14 @@ def _load_parsed_state():
         state.ssh_actor_labels.clear()
         state.ssh_actor_labels.update(
             {str(k): str(v) for k, v in dict(data.get("ssh_actor_labels", {})).items()}
+        )
+        state.ip_notes.clear()
+        state.ip_notes.update(
+            {str(k): str(v) for k, v in dict(data.get("ip_notes", {})).items()}
+        )
+        state.ip_categories.clear()
+        state.ip_categories.update(
+            {str(k): str(v) for k, v in dict(data.get("ip_categories", {})).items()}
         )
 
     with state.botnet_lock:

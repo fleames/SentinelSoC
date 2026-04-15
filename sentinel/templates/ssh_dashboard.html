@@ -129,6 +129,41 @@
 /* No-data state */
 .ssh-empty{color:var(--muted);font-family:var(--mono);font-size:11px;padding:20px 14px;text-align:center;}
 
+/* Category badges */
+.cat-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:1px 6px;border-radius:3px;font-family:var(--mono);white-space:nowrap;vertical-align:middle;}
+.cat-badge.botnet{background:rgba(220,38,38,.2);color:#f87171;border:1px solid rgba(220,38,38,.35);}
+.cat-badge.scanner{background:rgba(234,88,12,.18);color:#fb923c;border:1px solid rgba(234,88,12,.3);}
+.cat-badge.targeted{background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.35);}
+.cat-badge.apt{background:rgba(190,18,60,.2);color:#fb7185;border:1px solid rgba(190,18,60,.35);}
+.cat-badge.researcher{background:rgba(22,163,74,.18);color:#4ade80;border:1px solid rgba(22,163,74,.3);}
+.cat-badge.false_positive{background:rgba(107,114,128,.18);color:#9ca3af;border:1px solid rgba(107,114,128,.3);}
+.cat-badge.tor_exit{background:rgba(15,23,42,.5);color:#7dd3fc;border:1px solid rgba(125,211,252,.25);}
+.cat-badge.vpn_proxy{background:rgba(37,99,235,.18);color:#60a5fa;border:1px solid rgba(37,99,235,.3);}
+.cat-badge.custom{background:rgba(255,255,255,.08);color:#cbd5e1;border:1px solid rgba(255,255,255,.15);}
+
+/* Category picker in modal */
+.cat-picker{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;}
+.cat-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;color:var(--muted);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;cursor:pointer;font-family:var(--mono);transition:all var(--transition);}
+.cat-btn:hover{border-color:rgba(255,255,255,.25);color:var(--text);}
+.cat-btn.active{border-color:currentColor;color:var(--text);}
+.cat-btn.active.botnet{color:#f87171;background:rgba(220,38,38,.15);border-color:rgba(220,38,38,.4);}
+.cat-btn.active.scanner{color:#fb923c;background:rgba(234,88,12,.12);border-color:rgba(234,88,12,.35);}
+.cat-btn.active.targeted{color:#a78bfa;background:rgba(124,58,237,.15);border-color:rgba(124,58,237,.4);}
+.cat-btn.active.apt{color:#fb7185;background:rgba(190,18,60,.15);border-color:rgba(190,18,60,.4);}
+.cat-btn.active.researcher{color:#4ade80;background:rgba(22,163,74,.12);border-color:rgba(22,163,74,.35);}
+.cat-btn.active.false_positive{color:#9ca3af;background:rgba(107,114,128,.12);border-color:rgba(107,114,128,.35);}
+.cat-btn.active.tor_exit{color:#7dd3fc;background:rgba(15,23,42,.4);border-color:rgba(125,211,252,.3);}
+.cat-btn.active.vpn_proxy{color:#60a5fa;background:rgba(37,99,235,.12);border-color:rgba(37,99,235,.35);}
+
+/* Note textarea */
+.note-textarea{width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:12px;font-family:var(--mono);padding:8px 10px;resize:vertical;min-height:72px;outline:none;line-height:1.5;}
+.note-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,153,255,.12);}
+.note-footer{display:flex;justify-content:space-between;align-items:center;margin-top:5px;}
+.note-charcount{font-size:10px;color:var(--muted);font-family:var(--mono);}
+.note-save-btn{background:var(--accent);border:none;border-radius:5px;color:#fff;font-size:11px;font-weight:600;padding:5px 14px;cursor:pointer;}
+.note-save-btn:hover{filter:brightness(1.15);}
+.note-indicator{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn);margin-left:4px;vertical-align:middle;flex-shrink:0;}
+
 /* Drill-down modal */
 .ssh-modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center;}
 .ssh-modal-bg.open{display:flex;}
@@ -459,6 +494,28 @@ function renderSshDrill(d, body){
   }
 
   var tagHtml=tags.map(function(t){return '<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>';}).join('');
+  var PREDEFINED_CATS=['botnet','scanner','targeted','apt','researcher','false_positive','tor_exit','vpn_proxy'];
+  var currentCat=d.category||'';
+  var isCustomCat=currentCat&&PREDEFINED_CATS.indexOf(currentCat)<0;
+  var catBtns=PREDEFINED_CATS.map(function(c){
+    var active=currentCat===c?' active '+c:'';
+    return '<button class="cat-btn'+active+'" data-cat="'+esc(c)+'" onclick="sshCatClick(this,\''+esc(d.ip)+'\')">'+esc(c.replace(/_/g,' '))+'</button>';
+  }).join('');
+  var catHtml='<div class="drill-section-title">Category</div>'
+    +'<div class="cat-picker">'+catBtns+'</div>'
+    +'<div style="display:flex;gap:6px;margin-bottom:12px">'
+      +'<input type="text" id="customCatInput" placeholder="Custom category\u2026" value="'+(isCustomCat?esc(currentCat):'')+'" maxlength="60" style="flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;color:var(--text);font-size:11px;font-family:var(--mono);padding:4px 10px;outline:none;">'
+      +'<button onclick="sshSaveCustomCat(\''+esc(d.ip)+'\')" class="note-save-btn" style="font-size:10px;padding:4px 12px">Set</button>'
+    +'</div>';
+
+  var currentNote=d.note||'';
+  var noteHtml='<div class="drill-section-title">Analyst note</div>'
+    +'<textarea class="note-textarea" id="noteTextarea" oninput="sshNoteInput(this)" maxlength="2000" placeholder="Add notes about this attacker\u2026">'+esc(currentNote)+'</textarea>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;margin-bottom:12px">'
+      +'<span class="note-charcount" id="noteCharCount">'+currentNote.length+'/2000</span>'
+      +'<button class="note-save-btn" onclick="sshSaveNote(\''+esc(d.ip)+'\')">Save note</button>'
+    +'</div>';
+
   var daysHtml='';
   if(d.days_seen&&d.days_seen.length){
     daysHtml='<div class="drill-section-title">Days active ('+d.days_seen.length+')</div>'
@@ -548,6 +605,8 @@ function renderSshDrill(d, body){
       +'<div class="drill-stat"><div class="ds-label">Days Active</div><div class="ds-val">'+(d.days_seen?d.days_seen.length:0)+'</div></div>'
     +'</div>'
     +(tagHtml?'<div class="drill-section-title">Tags</div><div class="drill-tags">'+tagHtml+'</div>':'')
+    +catHtml
+    +noteHtml
     +authHtml
     +campHtml
     +keyFpHtml
@@ -558,6 +617,51 @@ function renderSshDrill(d, body){
     +'</div>'
     +daysHtml
     +usersHtml;
+}
+
+/* ── Category / note save helpers ── */
+function sshCatClick(btn, ip){
+  var cat=btn.dataset.cat;
+  var wasActive=btn.classList.contains('active');
+  var picker=btn.closest('.cat-picker');
+  picker.querySelectorAll('.cat-btn').forEach(function(b){b.className='cat-btn';});
+  var ci=document.getElementById('customCatInput');
+  if(ci) ci.value='';
+  if(!wasActive){
+    btn.classList.add('active',cat);
+    saveIpCategory(ip,cat);
+  } else {
+    saveIpCategory(ip,'');
+  }
+}
+function sshSaveCustomCat(ip){
+  var ci=document.getElementById('customCatInput');
+  if(!ci) return;
+  var cat=ci.value.trim().slice(0,60);
+  var modal=document.getElementById('sshDrillBody');
+  if(modal) modal.querySelectorAll('.cat-btn').forEach(function(b){b.className='cat-btn';});
+  saveIpCategory(ip,cat);
+}
+function sshNoteInput(ta){
+  var cc=document.getElementById('noteCharCount');
+  if(cc) cc.textContent=ta.value.length+'/2000';
+}
+function sshSaveNote(ip){
+  var ta=document.getElementById('noteTextarea');
+  if(!ta) return;
+  saveIpNote(ip,ta.value.trim());
+}
+function saveIpNote(ip,note){
+  fetch('/api/ip/note',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+    body:JSON.stringify({ip:ip,note:note})})
+    .then(function(r){return r.json();})
+    .catch(function(){});
+}
+function saveIpCategory(ip,category){
+  fetch('/api/ip/category',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+    body:JSON.stringify({ip:ip,category:category})})
+    .then(function(r){return r.json();})
+    .catch(function(){});
 }
 
 /* ── IP table ── */
@@ -576,6 +680,12 @@ function renderIpTable(rows){
     var allTags=r.tags||[];
     var tp=allTags.slice(0,3).map(function(t){return '<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>';}).join('');
     if(allTags.length>3) tp+='<span class="tag" style="opacity:.5">+'+(allTags.length-3)+'</span>';
+    var catCls=['botnet','scanner','targeted','apt','researcher','false_positive','tor_exit','vpn_proxy'];
+    if(r.category){
+      var cc=catCls.indexOf(r.category)>=0?r.category:'custom';
+      tp='<span class="cat-badge '+cc+'">'+esc(r.category.replace(/_/g,' '))+'</span> '+tp;
+    }
+    if(r.note) tp+='<span class="note-indicator" title="Has analyst note"></span>';
     var userHtml=r.top_user
       ?('<span class="user-pill" title="tried '+fmt(r.top_user_hits)+' times">'+esc(r.top_user)+'</span>')
       :'<span style="color:var(--muted)">—</span>';

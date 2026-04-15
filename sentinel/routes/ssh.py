@@ -45,6 +45,8 @@ def api_ssh_data():
                 "top_user": top_user,
                 "top_user_hits": top_user_hits,
                 "unique_users": len(user_counts),
+                "category": state.ip_categories.get(ip, ""),
+                "note": bool(state.ip_notes.get(ip)),
             })
 
         # Top 100 tried usernames
@@ -130,6 +132,8 @@ def api_ssh_ip():
         wordlist_fp = state.ssh_ip_wordlist_fp.get(ip, "")
         campaign_size = len(state.ssh_wordlist_campaigns.get(wordlist_fp, set())) if wordlist_fp else 0
         key_fps = sorted(state.ssh_ip_key_fps.get(ip, set()))
+        note = state.ip_notes.get(ip, "")
+        category = state.ip_categories.get(ip, "")
 
     users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
     return jsonify({
@@ -154,6 +158,8 @@ def api_ssh_ip():
             "req_count": b.get("req_count", 0),
         },
         "days_seen": days_seen,
+        "note": note,
+        "category": category,
     })
 
 

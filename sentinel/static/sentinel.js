@@ -837,6 +837,8 @@ function openBnModal(id){
 async function openIpModal(ip){
   if(!ip) return;
   modalIp=ip;
+  var mbn=document.getElementById('modalBanNote');
+  if(mbn) mbn.value='';
   document.getElementById('modalIpText').innerText=ip;
   document.getElementById('modalFlag').innerText='';
   document.getElementById('modalCcPill').style.display='none';
@@ -1391,11 +1393,16 @@ document.getElementById('modalExtLink').addEventListener('click',function(e){
 });
 document.getElementById('modalBan').addEventListener('click',async function(){
   if(!modalIp) return;
+  var noteEl=document.getElementById('modalBanNote');
+  var note=noteEl?noteEl.value.trim():'';
   try{
-    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
+    var body={ip:modalIp};
+    if(note) body.note=note;
+    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json().catch(function(){ return {}; });
     if(!r.ok){ alert(j.error||'Mute failed'); return; }
     warnIptables(j);
+    if(noteEl) noteEl.value='';
     closeModal();
     await load(true);
   }catch(e){ alert('Mute failed'); }

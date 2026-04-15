@@ -253,6 +253,13 @@
         <div class="modal-actions">
           <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
           <button type="button" class="toolbtn" id="modalExtLink">Lookup &#8599;</button>
+          <select id="modalBanNote" class="ban-inp ban-note-sel" style="max-width:120px;padding:5px 8px;font-size:11px;">
+            <option value="">— reason —</option>
+            <option value="http_abuse">HTTP abuse</option>
+            <option value="audit">Audit ban</option>
+            <option value="scanner">Scanner</option>
+            <option value="brute_force">Brute force</option>
+          </select>
           <button type="button" class="toolbtn danger" id="modalBan">Mute</button>
           <button type="button" class="toolbtn" id="modalClose">&#10005;</button>
         </div>

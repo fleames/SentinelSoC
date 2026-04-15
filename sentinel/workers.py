@@ -147,6 +147,11 @@ def stream(path=None, from_start=None, source_label=None):
     no_request = 0
     ingested = 0
     diag_issued = False
+    # Rate logging: print a summary line every LOG_INTERVAL seconds when active
+    _LOG_INTERVAL = 10.0
+    _last_log_ts = time.time()
+    _window_ok = 0
+    _window_skipped = 0
     try:
         for data in iter_caddy_log_objects(log_path, from_start=from_start_flag):
             if not isinstance(data, dict):
@@ -163,10 +168,26 @@ def stream(path=None, from_start=None, source_label=None):
                         flush=True,
                     )
                 continue
-            if result != "ok":
-                continue
+            if result == "ok":
+                ingested += 1
+                _window_ok += 1
+            else:
+                _window_skipped += 1
 
-            ingested += 1
+            # Periodic rate log — only prints when events are actually flowing
+            now = time.time()
+            if _window_ok and (now - _last_log_ts) >= _LOG_INTERVAL:
+                elapsed = now - _last_log_ts
+                skip_str = f"  skipped={_window_skipped}" if _window_skipped else ""
+                print(
+                    f"[stream] {source_label}: +{_window_ok} events in {elapsed:.0f}s"
+                    f"  ({_window_ok / elapsed:.1f}/s){skip_str}",
+                    flush=True,
+                )
+                _window_ok = 0
+                _window_skipped = 0
+                _last_log_ts = now
+
             if from_start_flag and ingested > 0 and ingested % 25000 == 0:
                 print(
                     f"[sentinel] replay progress: {ingested} lines ingested from {log_path!r}",

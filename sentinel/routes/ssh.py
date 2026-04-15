@@ -63,6 +63,25 @@ def api_ssh_data():
         alerts = list(state.ssh_recent_alerts)[:50]
         history = list(state.ssh_history_events)[:100]
 
+        # Auth method totals
+        auth_totals = dict(state.ssh_auth_method_totals)
+
+        # Credential campaigns — clusters of IPs sharing the same wordlist fingerprint
+        campaigns = []
+        for fp, ips in state.ssh_wordlist_campaigns.items():
+            if len(ips) < 2:
+                continue
+            ip_list = sorted(ips, key=lambda x: -state.ssh_ips.get(x, 0))
+            total_hits = sum(state.ssh_ips.get(ip, 0) for ip in ip_list)
+            campaigns.append({
+                "fp": fp,
+                "fp_short": fp[:8],
+                "ip_count": len(ip_list),
+                "total_hits": total_hits,
+                "top_ips": ip_list[:5],
+            })
+        campaigns.sort(key=lambda c: (-c["ip_count"], -c["total_hits"]))
+
     return jsonify({
         "total": total,
         "unique_ips": unique_ips,
@@ -74,6 +93,8 @@ def api_ssh_data():
         "top_asns": top_asns,
         "alerts": alerts,
         "history": history,
+        "auth_totals": auth_totals,
+        "campaigns": campaigns,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -93,6 +114,9 @@ def api_ssh_ip():
         tags = sorted(state.ip_tags.get(ip, ()))
         b = dict(state.ip_behavior.get(ip, {}))
         days_seen = sorted(state.ip_days_seen.get(ip, set()))
+        auth_methods = dict(state.ssh_ip_auth_methods.get(ip, {}))
+        wordlist_fp = state.ssh_ip_wordlist_fp.get(ip, "")
+        campaign_size = len(state.ssh_wordlist_campaigns.get(wordlist_fp, set())) if wordlist_fp else 0
 
     users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
     return jsonify({
@@ -104,6 +128,9 @@ def api_ssh_ip():
         "tags": tags,
         "users": [{"user": u, "attempts": n} for u, n in users_sorted],
         "unique_users": len(users_sorted),
+        "auth_methods": auth_methods,
+        "wordlist_fp": wordlist_fp,
+        "campaign_size": campaign_size,
         "behavior": {
             "first_seen": b.get("first_seen"),
             "last_seen": b.get("last_seen"),

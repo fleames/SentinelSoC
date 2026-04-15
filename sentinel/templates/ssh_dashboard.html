@@ -44,6 +44,30 @@
 .ulist-bar{height:100%;background:linear-gradient(90deg,var(--danger),#ff6b6b);border-radius:3px;}
 .ulist-count{color:var(--danger);font-weight:700;min-width:40px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
 
+/* Auth method breakdown strip */
+.auth-strip{display:flex;gap:0;margin:0 24px 16px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.08);}
+.auth-seg{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 4px;font-family:var(--mono);transition:background var(--transition);}
+.auth-seg:hover{filter:brightness(1.15);}
+.auth-seg .as-val{font-size:18px;font-weight:700;line-height:1;}
+.auth-seg .as-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-top:3px;}
+.auth-seg.pw{background:rgba(255,51,68,.08);border-right:1px solid rgba(255,255,255,.06);}
+.auth-seg.pw .as-val{color:var(--danger);}
+.auth-seg.pk{background:rgba(99,102,241,.08);border-right:1px solid rgba(255,255,255,.06);}
+.auth-seg.pk .as-val{color:#818cf8;}
+.auth-seg.sc{background:rgba(255,170,0,.06);}
+.auth-seg.sc .as-val{color:var(--warn);}
+
+/* Campaign cluster rows */
+.camp-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.025);font-family:var(--mono);font-size:11px;cursor:pointer;border-radius:6px;margin:0 2px;transition:background var(--transition);}
+.camp-row:last-child{border-bottom:none;}
+.camp-row:hover{background:rgba(255,255,255,.04);}
+.camp-fp{color:#818cf8;font-size:11px;font-weight:700;min-width:72px;flex-shrink:0;letter-spacing:.04em;}
+.camp-ips{color:var(--muted);min-width:28px;text-align:center;flex-shrink:0;}
+.camp-ips strong{color:var(--text);}
+.camp-hits{color:var(--danger);font-weight:700;min-width:52px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
+.camp-ip-chips{flex:1;display:flex;flex-wrap:wrap;gap:4px;min-width:0;overflow:hidden;}
+.camp-ip-chip{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:1px 6px;font-size:10px;color:#94a3b8;white-space:nowrap;}
+
 /* Country / ASN list */
 .geo-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.025);font-family:var(--mono);font-size:11px;}
 .geo-row:last-child{border-bottom:none;}
@@ -140,6 +164,13 @@
   </div>
 </div>
 
+<!-- Auth method breakdown strip -->
+<div class="auth-strip" id="authStrip">
+  <div class="auth-seg pw"><div class="as-val" id="authPw">0</div><div class="as-lbl">Password attacks</div></div>
+  <div class="auth-seg pk"><div class="as-val" id="authPk">0</div><div class="as-lbl">Pubkey attempts</div></div>
+  <div class="auth-seg sc"><div class="as-val" id="authSc">0</div><div class="as-lbl">Scanner probes</div></div>
+</div>
+
 <div class="ssh-layout">
 
   <!-- Main column -->
@@ -219,6 +250,12 @@
     <div class="card">
       <h2>Top attacking ASNs <span class="hint">hosting &amp; botnet providers</span></h2>
       <div style="max-height:240px;overflow-y:auto" id="asnList"></div>
+    </div>
+
+    <!-- Credential Campaigns -->
+    <div class="card" id="campaignsCard" style="display:none">
+      <h2>Credential campaigns <span class="hint">IPs sharing the same wordlist fingerprint</span></h2>
+      <div style="max-height:300px;overflow-y:auto" id="campaignsList"></div>
     </div>
 
   </div>
@@ -365,6 +402,41 @@ function renderSshDrill(d, body){
       +'</div>';
   }
 
+  // Auth method breakdown
+  var am=d.auth_methods||{};
+  var authHtml='';
+  if(am.password||am.publickey||am.scanner){
+    var amTotal=(am.password||0)+(am.publickey||0)+(am.scanner||0)||1;
+    function amBar(val,color,label){
+      var pct=Math.round(((val||0)/amTotal)*100);
+      if(!val) return '';
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+        +'<span style="font-size:10px;color:var(--muted);min-width:60px;font-family:var(--mono)">'+label+'</span>'
+        +'<div style="flex:1;height:6px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden">'
+          +'<div style="width:'+pct+'%;height:100%;background:'+color+';border-radius:3px"></div>'
+        +'</div>'
+        +'<span style="font-family:var(--mono);font-size:10px;color:'+color+';min-width:44px;text-align:right">'+fmt(val)+'</span>'
+      +'</div>';
+    }
+    authHtml='<div class="drill-section-title">Attack method breakdown</div>'
+      +amBar(am.password,'var(--danger)','password')
+      +amBar(am.publickey,'#818cf8','publickey')
+      +amBar(am.scanner,'var(--warn)','scanner');
+  }
+
+  // Campaign fingerprint
+  var campHtml='';
+  if(d.wordlist_fp){
+    var campColor=d.campaign_size>=5?'var(--danger)':d.campaign_size>=2?'var(--warn)':'#818cf8';
+    campHtml='<div class="drill-section-title">Credential campaign</div>'
+      +'<div style="display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px">'
+        +'<span style="background:rgba(129,140,248,.1);border:1px solid rgba(129,140,248,.25);border-radius:5px;padding:3px 10px;color:#818cf8;letter-spacing:.06em">'+esc(d.wordlist_fp.slice(0,8))+'</span>'
+        +(d.campaign_size>=2
+          ?'<span style="color:'+campColor+'"><strong>'+d.campaign_size+'</strong> IPs share this wordlist</span>'
+          :'<span style="color:var(--muted)">unique wordlist (no cluster yet)</span>')
+      +'</div>';
+  }
+
   var usersHtml='<div class="drill-section-title">Usernames tried ('+users.length+')</div>';
   if(!users.length){
     usersHtml+='<div style="color:var(--muted);font-family:var(--mono);font-size:11px;padding:8px 0">No username data</div>';
@@ -394,6 +466,8 @@ function renderSshDrill(d, body){
       +'<div class="drill-stat"><div class="ds-label">Days Active</div><div class="ds-val">'+(d.days_seen?d.days_seen.length:0)+'</div></div>'
     +'</div>'
     +(tagHtml?'<div class="drill-section-title">Tags</div><div class="drill-tags">'+tagHtml+'</div>':'')
+    +authHtml
+    +campHtml
     +'<div class="drill-section-title">Timing</div>'
     +'<div class="drill-meta">'
       +'<div>First seen: <span>'+tsLabel(b.first_seen)+'</span></div>'
@@ -581,6 +655,34 @@ function renderSshHistory(rows){
   }).join('');
 }
 
+/* ── auth method strip ── */
+function renderAuthStrip(totals){
+  var t=totals||{};
+  document.getElementById('authPw').textContent=fmt(t.password||0);
+  document.getElementById('authPk').textContent=fmt(t.publickey||0);
+  document.getElementById('authSc').textContent=fmt(t.scanner||0);
+}
+
+/* ── campaigns ── */
+function renderCampaigns(campaigns){
+  var card=document.getElementById('campaignsCard');
+  var el=document.getElementById('campaignsList');
+  var rows=campaigns||[];
+  if(!rows.length){if(card)card.style.display='none';return;}
+  if(card)card.style.display='';
+  el.innerHTML=rows.map(function(c){
+    var chips=c.top_ips.map(function(ip){
+      return '<span class="camp-ip-chip" onclick="openSshDrill(\''+esc(ip)+'\')" title="Drill down">'+esc(ip)+'</span>';
+    }).join('');
+    return '<div class="camp-row" title="Click any IP to drill down">'
+      +'<span class="camp-fp">'+esc(c.fp_short)+'</span>'
+      +'<span class="camp-ips"><strong>'+c.ip_count+'</strong> IPs</span>'
+      +'<div class="camp-ip-chips">'+chips+'</div>'
+      +'<span class="camp-hits">'+fmt(c.total_hits)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
 /* ── main render ── */
 function applyData(d){
   updateKpis(d);
@@ -592,6 +694,8 @@ function applyData(d){
   renderAsns(d.top_asns||[]);
   renderSshAlerts(d.alerts||[]);
   renderSshHistory(d.history||[]);
+  renderAuthStrip(d.auth_totals||{});
+  renderCampaigns(d.campaigns||[]);
   document.getElementById('foot').textContent='Server time: '+(d.server_time||'—');
 }
 

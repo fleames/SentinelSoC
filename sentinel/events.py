@@ -2,6 +2,7 @@
 """
 sentinel/events.py -- _process_log_event: ingest one access-log dict into state.
 """
+import hashlib
 import sys
 import time
 from datetime import datetime, timezone
@@ -27,6 +28,24 @@ from sentinel.rules import _apply_rules
 from sentinel.ua import _ua_tags
 from sentinel.persistence import _append_history_event
 from sentinel.enrichment import enqueue_reputation
+
+
+def _update_ssh_wordlist_fp(ip):
+    """Recompute the wordlist fingerprint for an SSH attacker IP.
+    Must be called inside state.lock. Minimum 3 unique usernames required."""
+    user_counts = state.ssh_ip_users.get(ip)
+    if not user_counts or len(user_counts) < 3:
+        return
+    fp = hashlib.sha256(",".join(sorted(user_counts.keys())).encode()).hexdigest()[:16]
+    old_fp = state.ssh_ip_wordlist_fp.get(ip)
+    if old_fp == fp:
+        return
+    if old_fp:
+        state.ssh_wordlist_campaigns[old_fp].discard(ip)
+        if not state.ssh_wordlist_campaigns[old_fp]:
+            del state.ssh_wordlist_campaigns[old_fp]
+    state.ssh_ip_wordlist_fp[ip] = fp
+    state.ssh_wordlist_campaigns[fp].add(ip)
 
 
 def _process_log_event(data, source=""):
@@ -98,6 +117,7 @@ def _process_log_event(data, source=""):
     })
 
     is_ssh = (source == "ssh")
+    ssh_auth_method = _header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "" if is_ssh else ""
 
     with state.lock:
         if is_ssh:
@@ -109,6 +129,13 @@ def _process_log_event(data, source=""):
             if ssh_user:
                 state.ssh_usernames[ssh_user] += 1
                 state.ssh_ip_users[ip][ssh_user] += 1
+            # Auth method tracking
+            if ssh_auth_method:
+                state.ssh_ip_auth_methods[ip][ssh_auth_method] += 1
+                state.ssh_auth_method_totals[ssh_auth_method] += 1
+            # Wordlist fingerprint — recompute when a new username is added
+            if ssh_user:
+                _update_ssh_wordlist_fp(ip)
         else:
             state.counters["total"] += 1
             state.counters["current_second"] += 1

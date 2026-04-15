@@ -301,6 +301,16 @@ def _save_parsed_state():
             "ssh_asns": [[str(k), int(v)] for k, v in state.ssh_asns.items()],
             "ssh_recent_alerts": list(state.ssh_recent_alerts),
             "ssh_history_events": list(state.ssh_history_events),
+            "ssh_auth_method_totals": list(state.ssh_auth_method_totals.items()),
+            "ssh_ip_auth_methods": {
+                str(ip): list(c.items())
+                for ip, c in state.ssh_ip_auth_methods.items()
+            },
+            "ssh_ip_wordlist_fp": dict(state.ssh_ip_wordlist_fp),
+            "ssh_wordlist_campaigns": {
+                str(fp): sorted(ips)
+                for fp, ips in state.ssh_wordlist_campaigns.items()
+            },
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -448,6 +458,22 @@ def _load_parsed_state():
         for row in list(data.get("ssh_history_events", []))[:500]:
             if isinstance(row, dict):
                 state.ssh_history_events.append(row)
+
+        state.ssh_auth_method_totals.clear()
+        state.ssh_auth_method_totals.update(
+            {str(k): int(v) for k, v in list(data.get("ssh_auth_method_totals", []))}
+        )
+        state.ssh_ip_auth_methods.clear()
+        for ip, items in dict(data.get("ssh_ip_auth_methods", {})).items():
+            state.ssh_ip_auth_methods[str(ip)] = Counter({str(k): int(v) for k, v in list(items)})
+
+        state.ssh_ip_wordlist_fp.clear()
+        state.ssh_ip_wordlist_fp.update(
+            {str(k): str(v) for k, v in dict(data.get("ssh_ip_wordlist_fp", {})).items()}
+        )
+        state.ssh_wordlist_campaigns.clear()
+        for fp, ips in dict(data.get("ssh_wordlist_campaigns", {})).items():
+            state.ssh_wordlist_campaigns[str(fp)] = set(str(ip) for ip in list(ips))
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

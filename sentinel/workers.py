@@ -112,6 +112,10 @@ def reset_dashboard_state():
         state.ssh_recent_alerts.clear()
         state.ssh_history_events.clear()
         state.counters["ssh_current_second"] = 0
+        state.ssh_ip_auth_methods.clear()
+        state.ssh_auth_method_totals.clear()
+        state.ssh_ip_wordlist_fp.clear()
+        state.ssh_wordlist_campaigns.clear()
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

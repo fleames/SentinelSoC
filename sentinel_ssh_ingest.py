@@ -44,39 +44,73 @@ SSH_SOURCE      = os.environ.get("SSH_SOURCE", "").strip().lower()  # "journal" 
 
 
 # ---------------------------------------------------------------------------
-# SSH log line patterns (used for both file and journal MESSAGE field)
+# SSH log line patterns — returns (ip, user_or_None, auth_method, src_port_or_None)
+# auth_method: "password" | "publickey" | "scanner" | ""
 # ---------------------------------------------------------------------------
 
-_FAIL_RE = [
-    re.compile(r"Failed (?:password|publickey) for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)"),
-    re.compile(r"Invalid user (\S+) from ([\da-fA-F:.]+)"),
-    re.compile(r"Disconnected from (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port"),
-    re.compile(r"Connection closed by (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port"),
-    re.compile(r"maximum authentication attempts exceeded for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)"),
-    re.compile(r"kex_exchange_identification.*from (\S+)@([\da-fA-F:.]+)"),
-]
+_FAILED_RE   = re.compile(r"Failed (password|publickey) for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_INVALID_RE  = re.compile(r"Invalid user (\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_DISCON_RE   = re.compile(r"Disconnected from (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port (\d+)")
+_CLOSED_RE   = re.compile(r"Connection closed by (?:invalid user |authenticating user )?(\S+) ([\da-fA-F:.]+) port (\d+)")
+_MAXAUTH_RE  = re.compile(r"maximum authentication attempts exceeded for (?:invalid user )?(\S+) from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_KEX_RE      = re.compile(r"kex_exchange_identification.*from (\S+)@([\da-fA-F:.]+)")
 
-_IP_ONLY_RE = [
-    re.compile(r"Did not receive identification string from ([\da-fA-F:.]+)"),
-    re.compile(r"Bad protocol version identification .{0,80} from ([\da-fA-F:.]+)"),
-    re.compile(r"Unable to negotiate with ([\da-fA-F:.]+)"),
-    re.compile(r"Connection reset by (?:invalid user )?\S+ ([\da-fA-F:.]+)"),
-    re.compile(r"Received disconnect from ([\da-fA-F:.]+) port \d+:.*\[preauth\]"),
-]
+_NO_IDENT_RE = re.compile(r"Did not receive identification string from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_BAD_VER_RE  = re.compile(r"Bad protocol version identification .{0,80} from ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_NO_NEG_RE   = re.compile(r"Unable to negotiate with ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_RESET_RE    = re.compile(r"Connection reset by (?:invalid user )?\S+ ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
+_RECV_RE     = re.compile(r"Received disconnect from ([\da-fA-F:.]+) port (\d+).*\[preauth\]")
 
 
 def _parse_line(line):
-    """Return (ip, user_or_None) for SSH failure lines, None otherwise."""
+    """Return (ip, user, auth_method, src_port) or None for non-SSH/non-failure lines."""
     if "sshd" not in line and "ssh" not in line.lower():
         return None
-    for pat in _FAIL_RE:
-        m = pat.search(line)
-        if m:
-            return m.group(2), m.group(1)
-    for pat in _IP_ONLY_RE:
-        m = pat.search(line)
-        if m:
-            return m.group(1), None
+
+    m = _FAILED_RE.search(line)
+    if m:
+        return m.group(3), m.group(2), m.group(1), int(m.group(4)) if m.group(4) else None
+
+    m = _INVALID_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None
+
+    m = _DISCON_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "password", int(m.group(3))
+
+    m = _CLOSED_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "password", int(m.group(3))
+
+    m = _MAXAUTH_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None
+
+    m = _KEX_RE.search(line)
+    if m:
+        return m.group(2), m.group(1), "scanner", None
+
+    m = _NO_IDENT_RE.search(line)
+    if m:
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+
+    m = _BAD_VER_RE.search(line)
+    if m:
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+
+    m = _NO_NEG_RE.search(line)
+    if m:
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+
+    m = _RESET_RE.search(line)
+    if m:
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None
+
+    m = _RECV_RE.search(line)
+    if m:
+        return m.group(1), None, "scanner", int(m.group(2))
+
     return None
 
 
@@ -84,8 +118,13 @@ def _parse_line(line):
 # Event builder
 # ---------------------------------------------------------------------------
 
-def _make_event(ip, user=None):
+def _make_event(ip, user=None, auth_method="", src_port=None):
     ua = f"SSH-client/{user}" if user else "SSH-client"
+    hdrs = {"User-Agent": [ua]}
+    if auth_method:
+        hdrs["X-SSH-Auth-Method"] = [auth_method]
+    if src_port:
+        hdrs["X-SSH-Src-Port"] = [str(src_port)]
     return {
         "msg":       "handled request",
         "ts":        datetime.now(timezone.utc).isoformat(),
@@ -96,9 +135,7 @@ def _make_event(ip, user=None):
         "method":    "SSH",
         "status":    401,
         "size":      0,
-        "headers": {
-            "User-Agent": [ua],
-        },
+        "headers":   hdrs,
     }
 
 
@@ -260,8 +297,8 @@ def main():
     for line in _line_source(mode):
         parsed = _parse_line(line)
         if parsed:
-            ip, user = parsed
-            batch.append(_make_event(ip, user))
+            ip, user, auth_method, src_port = parsed
+            batch.append(_make_event(ip, user, auth_method, src_port))
             if len(batch) >= BATCH_SIZE:
                 _post_batch(batch)
                 batch = []

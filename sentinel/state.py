@@ -108,6 +108,10 @@ ssh_asns = Counter()              # ASN -> SSH hit count
 ssh_timeline = []                 # list of per-tick SSH event counts (last 180 ticks)
 ssh_recent_alerts = deque(maxlen=config.ALERT_QUEUE_MAX)   # SSH-only alert feed
 ssh_history_events = deque(maxlen=500)                     # SSH recent events for history table
+ssh_ip_auth_methods = defaultdict(Counter)  # ip -> Counter(password=N, publickey=M, scanner=K)
+ssh_auth_method_totals = Counter()          # global totals: password / publickey / scanner
+ssh_ip_wordlist_fp = {}                     # ip -> 16-char hex fingerprint of credential set
+ssh_wordlist_campaigns = defaultdict(set)   # fingerprint -> set(ips) using same credential list
 behavior_signal_counts = Counter()
 history_buckets = {}
 history_lock = threading.Lock()

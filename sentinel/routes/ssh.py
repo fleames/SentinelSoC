@@ -59,6 +59,10 @@ def api_ssh_data():
             for a, n in state.ssh_asns.most_common(10)
         ]
 
+        # Alert feed + history
+        alerts = list(state.ssh_recent_alerts)[:50]
+        history = list(state.ssh_history_events)[:100]
+
     return jsonify({
         "total": total,
         "unique_ips": unique_ips,
@@ -68,5 +72,7 @@ def api_ssh_data():
         "top_users": top_users,
         "top_countries": [[c, n] for c, n in top_countries],
         "top_asns": top_asns,
+        "alerts": alerts,
+        "history": history,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })

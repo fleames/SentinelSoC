@@ -109,6 +109,8 @@ def reset_dashboard_state():
         state.ssh_countries.clear()
         state.ssh_asns.clear()
         state.ssh_timeline.clear()
+        state.ssh_recent_alerts.clear()
+        state.ssh_history_events.clear()
         state.counters["ssh_current_second"] = 0
     with state.reputation_lock:
         state.reputation_queue.clear()

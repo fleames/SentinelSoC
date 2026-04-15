@@ -138,13 +138,38 @@
     <!-- Most tried usernames -->
     <div class="card">
       <h2>Most tried usernames <span class="hint">credential wordlist intelligence &mdash; passwords not logged by sshd</span></h2>
-      <div style="max-height:380px;overflow-y:auto" id="userList"></div>
+      <div style="max-height:340px;overflow-y:auto" id="userList"></div>
+    </div>
+
+    <!-- Historical events -->
+    <div class="card">
+      <h2>Historical telemetry <span class="hint">recent SSH auth events</span></h2>
+      <div class="hist-table-wrap" style="max-height:300px">
+        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
+          <thead>
+            <tr style="position:sticky;top:0;background:rgba(8,12,22,0.96)">
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Time (UTC)</th>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Username tried</th>
+              <th style="text-align:center;padding:6px 8px;border-bottom:1px solid var(--border)">CC</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Score</th>
+            </tr>
+          </thead>
+          <tbody id="sshHistoryRows"></tbody>
+        </table>
+      </div>
     </div>
 
   </div>
 
   <!-- Sidebar -->
   <div>
+
+    <!-- Alert feed -->
+    <div class="card">
+      <h2>Alert feed <span class="hint">SSH events above score threshold</span></h2>
+      <div class="body" style="max-height:340px" id="sshAlerts"></div>
+    </div>
 
     <!-- Top attacker detail (first IP) -->
     <div class="card" id="topAttackerCard">
@@ -155,13 +180,13 @@
     <!-- Countries -->
     <div class="card">
       <h2>Attack origin countries</h2>
-      <div style="max-height:320px;overflow-y:auto" id="countryList"></div>
+      <div style="max-height:280px;overflow-y:auto" id="countryList"></div>
     </div>
 
     <!-- ASNs -->
     <div class="card">
       <h2>Top attacking ASNs <span class="hint">hosting &amp; botnet providers</span></h2>
-      <div style="max-height:280px;overflow-y:auto" id="asnList"></div>
+      <div style="max-height:240px;overflow-y:auto" id="asnList"></div>
     </div>
 
   </div>
@@ -384,6 +409,56 @@ function renderAsns(asns){
   }).join('');
 }
 
+/* ── alert feed ── */
+function renderSshAlerts(alerts){
+  var el=document.getElementById('sshAlerts');
+  var rows=alerts||[];
+  if(!rows.length){
+    el.innerHTML='<div class="list-empty">No alerts yet &mdash; high-scoring SSH events will appear here</div>';
+    return;
+  }
+  el.innerHTML=rows.map(function(a){
+    var f=flag(a.country||'')||esc(a.country||'?');
+    var tags=(a.tags||[]).map(function(t){return '<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>';}).join('');
+    var scoreCls=a.score>=50?'list-val danger':a.score>=15?'list-val warn':'list-val';
+    // Extract username from UA: SSH-client/<user>
+    var ua=a.ua||'';
+    var user=ua.startsWith('SSH-client/')?ua.slice(11):'';
+    return '<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:3px;cursor:default">'
+      +'<div style="display:flex;width:100%;align-items:center;gap:6px">'
+        +'<span style="color:var(--muted);font-size:10px;flex-shrink:0">'+esc(a.ts)+'</span>'
+        +'<span style="color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:600">'+esc(a.ip)+'</span>'
+        +'<span>'+f+'</span>'
+        +'<span class="'+scoreCls+'" style="margin-left:auto">+'+a.score+'</span>'
+      +'</div>'
+      +(user?'<div style="font-family:var(--mono);font-size:10px"><span style="color:var(--muted)">user: </span><span class="user-pill">'+esc(user)+'</span></div>':'')
+      +(tags?'<div style="display:flex;flex-wrap:wrap;gap:3px">'+tags+'</div>':'')
+    +'</div>';
+  }).join('');
+}
+
+/* ── history table ── */
+function renderSshHistory(rows){
+  var tbody=document.getElementById('sshHistoryRows');
+  if(!rows||!rows.length){
+    tbody.innerHTML='<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:11px">No events yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map(function(r){
+    var ua=r.ua||'';
+    var user=ua.startsWith('SSH-client/')?ua.slice(11):(ua==='SSH-client'?'—':esc(ua.slice(0,40)));
+    var scoreColor=r.score>=50?'var(--danger)':r.score>=15?'var(--warn)':'var(--muted)';
+    var f=flag(r.country||'')||esc(r.country||'?');
+    return '<tr>'
+      +'<td style="padding:4px 8px;color:var(--muted)">'+esc(r.ts)+'</td>'
+      +'<td style="padding:4px 8px;color:var(--accent);font-weight:600">'+esc(r.ip)+'</td>'
+      +'<td style="padding:4px 8px">'+(user==='—'?'<span style="color:var(--muted)">—</span>':'<span class="user-pill">'+esc(user)+'</span>')+'</td>'
+      +'<td style="padding:4px 8px;text-align:center">'+f+'</td>'
+      +'<td style="padding:4px 8px;text-align:right;color:'+scoreColor+';font-weight:700">'+r.score+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
 /* ── main render ── */
 function applyData(d){
   updateKpis(d);
@@ -393,6 +468,8 @@ function applyData(d){
   renderUserList(d.top_users||[]);
   renderCountries(d.top_countries||[]);
   renderAsns(d.top_asns||[]);
+  renderSshAlerts(d.alerts||[]);
+  renderSshHistory(d.history||[]);
   document.getElementById('foot').textContent='Server time: '+(d.server_time||'—');
 }
 

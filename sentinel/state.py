@@ -106,6 +106,8 @@ ssh_ip_users = defaultdict(Counter)  # ip -> username -> attempt count
 ssh_countries = Counter()         # country -> SSH hit count
 ssh_asns = Counter()              # ASN -> SSH hit count
 ssh_timeline = []                 # list of per-tick SSH event counts (last 180 ticks)
+ssh_recent_alerts = deque(maxlen=config.ALERT_QUEUE_MAX)   # SSH-only alert feed
+ssh_history_events = deque(maxlen=500)                     # SSH recent events for history table
 behavior_signal_counts = Counter()
 history_buckets = {}
 history_lock = threading.Lock()

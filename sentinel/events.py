@@ -241,49 +241,56 @@ def _process_log_event(data, source=""):
                 "seq": ">".join(list(state.ip_recent_paths[ip])[-3:]),
             })
 
+        alert_row = {
+            "ts": ts,
+            "ip": ip,
+            "uri": uri[:200],
+            "score": s,
+            "status": status,
+            "country": country_u,
+            "asn": asn_u[:120],
+            "ua": (ua or "-")[:80],
+            "tags": _ua_tags(ua),
+            "rules": matched_rules,
+        }
         if s >= config.SCORE_ALERT_THRESHOLD:
-            state.recent_alerts.appendleft(
-                {
-                    "ts": ts,
-                    "ip": ip,
-                    "uri": uri[:200],
-                    "score": s,
-                    "status": status,
-                    "country": country_u,
-                    "asn": asn_u[:120],
-                    "ua": (ua or "-")[:80],
-                    "tags": _ua_tags(ua),
-                    "rules": matched_rules,
-                }
-            )
-        _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
+            if is_ssh:
+                state.ssh_recent_alerts.appendleft(alert_row)
+            else:
+                state.recent_alerts.appendleft(alert_row)
+
+        if not is_ssh:
+            _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
         if source:
             state.sources[source] += 1
 
     if country_u == config.PLACEHOLDER_CC or asn_u == config.PLACEHOLDER_ASN:
         enqueue_geo(ip)
 
-    # Skip logging zero-score static assets to history — they are browser noise
-    # (JS chunks, CSS, fonts, icons) and clutter the historical events view.
-    if s > 0 or not _is_static_asset(path_bucket):
-        _append_history_event(
-            {
-                "ts": ts,
-                "ts_epoch": ts_epoch,
-                "ip": ip,
-                "host": host,
-                "ref": ref if ref != "-" else "",
-                "ua": ua[:200],
-                "accept": (accept_v or "")[:120],
-                "fingerprint": fp,
-                "uri": uri[:220],
-                "path": path_bucket,
-                "status": int(status),
-                "score": int(s),
-                "country": country_u,
-                "asn": asn_u[:120],
-                "tags": _ua_tags(ua),
-            }
-        )
+    event_row = {
+        "ts": ts,
+        "ts_epoch": ts_epoch,
+        "ip": ip,
+        "host": host,
+        "ref": ref if ref != "-" else "",
+        "ua": ua[:200],
+        "accept": (accept_v or "")[:120],
+        "fingerprint": fp,
+        "uri": uri[:220],
+        "path": path_bucket,
+        "status": int(status),
+        "score": int(s),
+        "country": country_u,
+        "asn": asn_u[:120],
+        "tags": _ua_tags(ua),
+    }
+    if is_ssh:
+        # SSH events go to dedicated SSH history — not shared HTTP history files
+        with state.lock:
+            state.ssh_history_events.appendleft(event_row)
+    elif s > 0 or not _is_static_asset(path_bucket):
+        # Skip logging zero-score static assets to history — they are browser noise
+        # (JS chunks, CSS, fonts, icons) and clutter the historical events view.
+        _append_history_event(event_row)
 
     return "ok"

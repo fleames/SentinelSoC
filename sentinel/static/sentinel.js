@@ -1308,11 +1308,23 @@ document.getElementById('modalBg').addEventListener('click',function(e){ if(e.ta
 document.getElementById('modalClose').addEventListener('click',closeModal);
 document.getElementById('modalCopy').addEventListener('click',function(){
   if(!modalIp) return;
-  if(navigator.clipboard){navigator.clipboard.writeText(modalIp).then(function(){
-    var btn=document.getElementById('modalCopy');var orig=btn.innerText;
-    btn.innerText='Copied!';btn.style.color='var(--ok)';
+  var btn=document.getElementById('modalCopy');
+  function _flash(ok){
+    var orig=btn.innerText;
+    btn.innerText=ok?'Copied!':'Copy failed';
+    btn.style.color=ok?'var(--ok)':'var(--danger)';
     setTimeout(function(){btn.innerText=orig;btn.style.color='';},1500);
-  });}
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(modalIp).then(function(){_flash(true);},function(){_flash(false);});
+  } else {
+    // Fallback for HTTP (no clipboard API)
+    var ta=document.createElement('textarea');
+    ta.value=modalIp;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.focus();ta.select();
+    try{_flash(document.execCommand('copy'));}catch(e){_flash(false);}
+    document.body.removeChild(ta);
+  }
 });
 document.getElementById('modalExtLink').addEventListener('click',function(e){
   e.preventDefault();

@@ -1451,7 +1451,9 @@ function renderAudit(entries){
     var col=ACTION_COLOR[e.action]||'var(--accent)';
     var targetIp=(e.detail&&e.detail.ip)||(e.action==='auth_failed'?(e.remote||''):'');
     var banBtn=targetIp
-      ? '<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px;flex-shrink:0;margin-left:4px">Ban</button>'
+      ? '<span class="audit-ban-wrap" style="display:inline-flex;gap:4px;align-items:center;flex-shrink:0;margin-left:4px">'
+        +'<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Ban</button>'
+        +'</span>'
       : '';
     html+='<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:5px 10px">'
       +'<div style="display:flex;gap:6px;width:100%;align-items:center">'
@@ -1503,19 +1505,52 @@ document.addEventListener('click', function(e){
 });
 
 document.addEventListener('click',async function(e){
-  /* Ban from audit log row */
+  /* Ban from audit log row — first click expands inline reason picker */
   var banBtn=e.target.closest('.audit-ban-btn');
   if(banBtn&&banBtn.dataset.ip){
     var ip=banBtn.dataset.ip;
-    if(!confirm('Mute '+ip+'?')) return;
+    var wrap=banBtn.closest('.audit-ban-wrap');
+    if(!wrap) return;
+    var noteOpts='<option value="">— reason —</option>'
+      +'<option value="http_abuse">HTTP abuse</option>'
+      +'<option value="audit">Audit ban</option>'
+      +'<option value="scanner">Scanner</option>'
+      +'<option value="brute_force">Brute force</option>';
+    wrap.innerHTML='<select class="ban-inp ban-note-sel audit-ban-note" style="max-width:115px;padding:2px 6px;font-size:10px;height:22px">'+noteOpts+'</select>'
+      +'<button type="button" class="toolbtn danger audit-ban-confirm" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Mute</button>'
+      +'<button type="button" class="toolbtn audit-ban-cancel" style="font-size:9px;padding:2px 6px">✕</button>';
+    wrap.querySelector('.audit-ban-note').focus();
+    return;
+  }
+
+  /* Confirm mute from expanded audit row picker */
+  var confirmBtn=e.target.closest('.audit-ban-confirm');
+  if(confirmBtn&&confirmBtn.dataset.ip){
+    var ip=confirmBtn.dataset.ip;
+    var wrap=confirmBtn.closest('.audit-ban-wrap');
+    var noteEl=wrap?wrap.querySelector('.audit-ban-note'):null;
+    var note=noteEl?noteEl.value.trim():'';
     try{
-      var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+      var body={ip:ip};
+      if(note) body.note=note;
+      var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       var j=await r.json().catch(function(){return{};});
       if(!r.ok){alert(j.error||'Mute failed');return;}
       warnIptables(j);
       await load(true);
       await loadAudit(true);
     }catch(err){alert('Mute failed');}
+    return;
+  }
+
+  /* Cancel audit row picker */
+  var cancelBtn=e.target.closest('.audit-ban-cancel');
+  if(cancelBtn){
+    var wrap=cancelBtn.closest('.audit-ban-wrap');
+    if(wrap){
+      var ip=wrap.querySelector('.audit-ban-confirm')?wrap.querySelector('.audit-ban-confirm').dataset.ip:'';
+      if(ip) wrap.innerHTML='<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Ban</button>';
+    }
     return;
   }
 

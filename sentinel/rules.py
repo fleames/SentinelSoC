@@ -121,6 +121,13 @@ DETECTION_RULES = [
         ) and e.get("status") in (401, 403),
         "score": 6,
     },
+    # -- SSH brute-force (from sentinel_ssh_ingest) --
+    {
+        "name": "ssh_bruteforce",
+        "match": lambda e: (e.get("path") or "").lower() == "/ssh"
+            and e.get("status") in (401, 403),
+        "score": 8,
+    },
     # -- Origin-bypass (direct-to-origin when CF expected) --
     {
         "name": "origin_bypass",

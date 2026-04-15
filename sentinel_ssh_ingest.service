@@ -1,0 +1,38 @@
+[Unit]
+Description=Sentinel SSH Auth Log Ingest
+Documentation=https://github.com/fleames/SentinelSoC
+After=network.target
+# Start after Sentinel if running on the same host
+After=sentinel.service
+Wants=sentinel.service
+
+[Service]
+Type=simple
+
+# If Sentinel uses an ingest key, put it in /opt/sentinel/.env:
+#   SENTINEL_INGEST_KEY=your-key-here
+EnvironmentFile=-/opt/sentinel/.env
+
+# Override any of these defaults in the EnvironmentFile above:
+Environment="SENTINEL_URL=http://127.0.0.1:5000"
+Environment="SSH_LOG_PATH=/var/log/auth.log"
+Environment="SSH_BATCH_SIZE=20"
+Environment="SSH_FLUSH_INTERVAL=5"
+
+ExecStart=/usr/bin/python3 /opt/sentinel/sentinel_ssh_ingest.py
+
+Restart=on-failure
+RestartSec=10
+
+# Run as a low-privilege user that can read auth.log.
+# On most distros auth.log is readable by the 'adm' group:
+#   usermod -aG adm sentinel
+User=sentinel
+Group=adm
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-ssh
+
+[Install]
+WantedBy=multi-user.target

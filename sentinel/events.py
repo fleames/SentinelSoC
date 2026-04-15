@@ -178,7 +178,7 @@ def _process_log_event(data, source=""):
         # Only count login/admin pressure on auth failures — normal page visits
         # (including RSC prefetches returning 200) should not inflate the score.
         if status in (401, 403):
-            if path_bucket in ("/login", "/signin"):
+            if path_bucket in ("/login", "/signin", "/ssh"):
                 b["login_hits"] += 1
             if path_bucket in ("/wp-login", "/wp-login.php"):
                 b["wp_login_hits"] += 1

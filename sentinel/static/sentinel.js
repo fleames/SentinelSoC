@@ -460,17 +460,11 @@ function filterPairs(pairs,q){
 }
 
 function listRow(rank,key,val,barPct,pct,opts){
-  /* opts: {danger,warn,ok,ipClick,hostClick,refClick,tags,bgCls,keyWrap,hl} */
+  /* opts: {danger,warn,ok,ipClick,tags,bgCls,keyWrap} */
   opts=opts||{};
-  var ipFocused=focusIp&&String(key)===focusIp;
-  var extraHl=opts.hl;
-  var hl=(ipFocused||extraHl)?' hl-focus':'';
+  var hl=(focusIp&&String(key)===focusIp)?' hl-focus':'';
   var ipCls=opts.ipClick?' row-ip':'';
-  var hostCls=opts.hostClick?' row-host':'';
-  var refCls=opts.refClick?' row-ref':'';
   var dataIp=opts.ipClick?' data-ip="'+escapeAttr(key)+'"':'';
-  var dataHost=opts.hostClick?' data-host="'+escapeAttr(key)+'"':'';
-  var dataRef=opts.refClick?' data-ref="'+escapeAttr(key)+'"':'';
   var valCls=opts.danger?' danger':opts.warn?' warn':opts.ok?' ok':'';
   var bgCls=opts.bgCls?(' '+opts.bgCls):'';
   var rankCls=rank===1?' r1':'';
@@ -479,7 +473,7 @@ function listRow(rank,key,val,barPct,pct,opts){
     ? ' '+opts.tags.map(function(t){return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>';}).join('')
     : '';
   var pctHtml=pct!=null?('<span class="list-pct">'+pct+'</span>'):'';
-  return '<div class="list-row'+hl+ipCls+hostCls+refCls+'"'+dataIp+dataHost+dataRef+'>'
+  return '<div class="list-row'+hl+ipCls+'"'+dataIp+'>'
     +'<div class="list-row-bg'+bgCls+'" style="width:'+barPct+'%"></div>'
     +'<span class="list-rank'+rankCls+'">'+rank+'</span>'
     +'<span class="list-key'+keyWrap+'" title="'+escapeAttr(key)+'">'+escapeHtml(key)+pills+'</span>'
@@ -540,8 +534,7 @@ function renderIpList(el,pairs,tagMap){
   });
   el.innerHTML=html;
 }
-function renderList(el,data,flag,ipCol,opts){
-  opts=opts||{};
+function renderList(el,data,flag,ipCol){
   var q=document.getElementById('q').value;
   var pairs=filterPairs(data,q);
   if(!pairs.length){el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No matches</span></div>';return;}
@@ -552,13 +545,7 @@ function renderList(el,data,flag,ipCol,opts){
     var barPct=Math.round(((p[1]||0)/maxV)*100);
     var pct=(((p[1]||0)/total)*100).toFixed(1)+'%';
     var isDanger=flag&&p[1]>100;
-    var isHostFocus=opts.hostClick&&focusHost&&String(p[0]).toLowerCase()===focusHost.toLowerCase();
-    var isRefFocus=opts.refClick&&focusRef&&String(p[0]).toLowerCase().includes(focusRef.toLowerCase());
-    var hl=isHostFocus||isRefFocus;
-    html+=listRow(i+1,p[0],p[1],barPct,pct,{
-      danger:isDanger,ipClick:ipCol,bgCls:isDanger?'danger':'',
-      hostClick:opts.hostClick,refClick:opts.refClick,hl:hl,
-    });
+    html+=listRow(i+1,p[0],p[1],barPct,pct,{danger:isDanger,ipClick:ipCol,bgCls:isDanger?'danger':''});
   });
   el.innerHTML=html;
 }
@@ -1121,9 +1108,9 @@ function renderStorage(el,s){
 
 function applyRender(d){
   renderIpList(document.getElementById('ips'),d.ips,d.ip_tags||{});
-  renderList(document.getElementById('domains'),d.domains,false,false,{hostClick:true});
+  renderList(document.getElementById('domains'),d.domains);
   renderList(document.getElementById('paths'),d.paths);
-  renderList(document.getElementById('refs'),d.referers,false,false,{refClick:true});
+  renderList(document.getElementById('refs'),d.referers);
   renderList(document.getElementById('asn'),d.asn);
   renderStatus(document.getElementById('status'),d.status);
   renderAlerts(document.getElementById('alerts'),d.alerts);
@@ -1406,24 +1393,11 @@ document.body.addEventListener('click',function(e){
   if(ar&&ar.dataset.ip){ toggleIpFocus(ar.dataset.ip); return; }
   var hi=e.target.closest('.hist-ip-link');
   if(hi&&hi.dataset.ip){ toggleIpFocus(hi.dataset.ip); return; }
-  // Host drill-down
-  var hostRow=e.target.closest('.row-host');
-  if(hostRow&&hostRow.dataset.host){
-    var h=hostRow.dataset.host;
-    if(focusHost===h){ setFocusHost(''); } else { setFocusHost(h); }
-    return;
-  }
+  // Host drill-down (from history table)
   var hhl=e.target.closest('.hist-host-link');
   if(hhl&&hhl.dataset.host){
     var hh=hhl.dataset.host;
     if(focusHost===hh){ setFocusHost(''); } else { setFocusHost(hh); }
-    return;
-  }
-  // Referer drill-down
-  var refRow=e.target.closest('.row-ref');
-  if(refRow&&refRow.dataset.ref){
-    var rf=refRow.dataset.ref;
-    if(focusRef===rf){ setFocusRef(''); } else { setFocusRef(rf); }
     return;
   }
 });

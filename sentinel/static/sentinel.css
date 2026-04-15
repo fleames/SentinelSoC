@@ -229,10 +229,6 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .list-row:hover{background:rgba(0,229,255,0.055);transform:translateX(3px);box-shadow:inset 0 0 0 1px rgba(0,229,255,0.1),0 0 20px rgba(0,229,255,0.04);}
 .list-row.row-ip{cursor:pointer;}
 .list-row.row-ip:active{background:rgba(0,229,255,0.12);}
-.list-row.row-host{cursor:pointer;}
-.list-row.row-host:active{background:rgba(167,139,250,0.12);}
-.list-row.row-ref{cursor:pointer;}
-.list-row.row-ref:active{background:rgba(52,211,153,0.12);}
 .list-row.hl-focus{box-shadow:inset 0 0 0 1px rgba(168,85,247,0.55);background:rgba(168,85,247,0.09);}
 .hist-host-link:hover{color:var(--warn)!important;}
 .list-row-bg{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(0,229,255,0.08),rgba(0,229,255,0.02));border-radius:8px;pointer-events:none;transition:width .5s cubic-bezier(0.4,0,0.2,1);}

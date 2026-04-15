@@ -290,6 +290,15 @@ def _save_parsed_state():
             "stream_parse_debug": dict(state.stream_parse_debug),
             "muted_hits": {str(k): int(v) for k, v in state.muted_hits.items()},
             "sources": [[str(k), int(v)] for k, v in state.sources.items()],
+            "ssh_total": int(state.ssh_total),
+            "ssh_ips": [[str(k), int(v)] for k, v in state.ssh_ips.items()],
+            "ssh_usernames": [[str(k), int(v)] for k, v in state.ssh_usernames.most_common(5000)],
+            "ssh_ip_users": {
+                str(ip): [[str(u), int(c)] for u, c in users.items()]
+                for ip, users in state.ssh_ip_users.items()
+            },
+            "ssh_countries": [[str(k), int(v)] for k, v in state.ssh_countries.items()],
+            "ssh_asns": [[str(k), int(v)] for k, v in state.ssh_asns.items()],
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -411,6 +420,22 @@ def _load_parsed_state():
 
         state.sources.clear()
         state.sources.update({str(k): int(v) for k, v in list(data.get("sources", []))})
+
+        state.ssh_total = int(data.get("ssh_total", 0) or 0)
+        state.ssh_ips.clear()
+        state.ssh_ips.update({str(k): int(v) for k, v in list(data.get("ssh_ips", []))})
+        state.ssh_usernames.clear()
+        state.ssh_usernames.update({str(k): int(v) for k, v in list(data.get("ssh_usernames", []))})
+        state.ssh_ip_users.clear()
+        for ip, rows in dict(data.get("ssh_ip_users", {})).items():
+            c = Counter()
+            for u, cnt in list(rows):
+                c[str(u)] += int(cnt)
+            state.ssh_ip_users[str(ip)] = c
+        state.ssh_countries.clear()
+        state.ssh_countries.update({str(k): int(v) for k, v in list(data.get("ssh_countries", []))})
+        state.ssh_asns.clear()
+        state.ssh_asns.update({str(k): int(v) for k, v in list(data.get("ssh_asns", []))})
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

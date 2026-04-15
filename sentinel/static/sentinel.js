@@ -1452,7 +1452,7 @@ function renderAudit(entries){
     var targetIp=(e.detail&&e.detail.ip)||(e.action==='auth_failed'?(e.remote||''):'');
     var banBtn=targetIp
       ? '<span class="audit-ban-wrap" style="display:inline-flex;gap:4px;align-items:center;flex-shrink:0;margin-left:4px">'
-        +'<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Ban</button>'
+        +'<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(targetIp)+'" style="font-size:9px;padding:2px 7px">Mute</button>'
         +'</span>'
       : '';
     html+='<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:5px 10px">'
@@ -1549,7 +1549,7 @@ document.addEventListener('click',async function(e){
     var wrap=cancelBtn.closest('.audit-ban-wrap');
     if(wrap){
       var ip=wrap.querySelector('.audit-ban-confirm')?wrap.querySelector('.audit-ban-confirm').dataset.ip:'';
-      if(ip) wrap.innerHTML='<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Ban</button>';
+      if(ip) wrap.innerHTML='<button type="button" class="toolbtn danger audit-ban-btn" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Mute</button>';
     }
     return;
   }

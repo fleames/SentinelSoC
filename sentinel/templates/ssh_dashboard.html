@@ -500,7 +500,7 @@ async function load(){
 document.addEventListener('DOMContentLoaded',function(){
   initChart();
   load();
-  setInterval(load,3000);
+  setInterval(load,1500);
   setInterval(function(){
     document.getElementById('updatedAgo').textContent=timeAgoStr(lastLoad);
   },1000);

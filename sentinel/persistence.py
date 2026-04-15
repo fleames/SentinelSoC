@@ -299,6 +299,8 @@ def _save_parsed_state():
             },
             "ssh_countries": [[str(k), int(v)] for k, v in state.ssh_countries.items()],
             "ssh_asns": [[str(k), int(v)] for k, v in state.ssh_asns.items()],
+            "ssh_recent_alerts": list(state.ssh_recent_alerts),
+            "ssh_history_events": list(state.ssh_history_events),
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -436,6 +438,16 @@ def _load_parsed_state():
         state.ssh_countries.update({str(k): int(v) for k, v in list(data.get("ssh_countries", []))})
         state.ssh_asns.clear()
         state.ssh_asns.update({str(k): int(v) for k, v in list(data.get("ssh_asns", []))})
+
+        state.ssh_recent_alerts.clear()
+        for row in list(data.get("ssh_recent_alerts", []))[:config.ALERT_QUEUE_MAX]:
+            if isinstance(row, dict):
+                state.ssh_recent_alerts.append(row)
+
+        state.ssh_history_events.clear()
+        for row in list(data.get("ssh_history_events", []))[:500]:
+            if isinstance(row, dict):
+                state.ssh_history_events.append(row)
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

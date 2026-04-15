@@ -171,17 +171,17 @@ def stream(path=None, from_start=None, source_label=None):
             if result == "ok":
                 ingested += 1
                 _window_ok += 1
-            else:
+            elif result == "banned":
                 _window_skipped += 1
 
             # Periodic rate log — only prints when events are actually flowing
             now = time.time()
             if _window_ok and (now - _last_log_ts) >= _LOG_INTERVAL:
                 elapsed = now - _last_log_ts
-                skip_str = f"  skipped={_window_skipped}" if _window_skipped else ""
+                ban_str = f"  banned={_window_skipped}" if _window_skipped else ""
                 print(
                     f"[stream] {source_label}: +{_window_ok} events in {elapsed:.0f}s"
-                    f"  ({_window_ok / elapsed:.1f}/s){skip_str}",
+                    f"  ({_window_ok / elapsed:.1f}/s){ban_str}",
                     flush=True,
                 )
                 _window_ok = 0

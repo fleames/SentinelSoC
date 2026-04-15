@@ -98,6 +98,8 @@ def reset_dashboard_state():
         state.ip_tls_fp.clear()
         state.ua_burst_window.clear()
         state.ip_hosts.clear()
+        state.ssh_ips.clear()
+        state.ssh_total = 0
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

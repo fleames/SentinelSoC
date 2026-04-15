@@ -633,11 +633,13 @@ function renderThreats(el,rows){
   }).join('');
 }
 
-function renderSshAttackers(el,rows){
+function renderSshAttackers(el,rows,total){
   var r=rows||[];
   var card=document.getElementById('sshAttackersCard');
   if(card) card.style.display=r.length?'':'none';
-  if(!r.length){el.innerHTML='<div class="th-row"><span></span><span class="ip" style="color:var(--muted)">No SSH attacks recorded</span></div>';return;}
+  var hint=document.getElementById('sshTotalHint');
+  if(hint) hint.textContent=r.length?(Number(total||0).toLocaleString()+' total auth failures \u2014 top 20 unique IPs'):'';
+  if(!r.length){el.innerHTML='<div class="th-row"><span></span><span class="ip" style="color:var(--muted)">No SSH attacks recorded \u2014 deploy sentinel_ssh_ingest on your server</span></div>';return;}
   var absMax=Math.max.apply(null,r.map(function(t){return t.ssh_hits||0;}).concat([10]));
   el.innerHTML=r.map(function(t,i){
     var allTags=t.tags||[];
@@ -1142,7 +1144,7 @@ function applyRender(d){
   renderStatus(document.getElementById('status'),d.status);
   renderAlerts(document.getElementById('alerts'),d.alerts);
   renderThreats(document.getElementById('threats'),d.top_threats);
-  renderSshAttackers(document.getElementById('sshAttackers'),d.ssh_attackers||[]);
+  renderSshAttackers(document.getElementById('sshAttackers'),d.ssh_attackers||[],d.ssh_total||0);
   renderBotnetCampaigns(document.getElementById('botnets'),d.botnet_campaigns);
   renderSources(document.getElementById('sourcesList'),d.sources,d.log_paths,d.ingest_enabled);
   renderTlsFp(document.getElementById('tlsFpList'),d.tls_fp_shared||[]);

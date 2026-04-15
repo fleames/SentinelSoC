@@ -97,24 +97,30 @@ def _process_log_event(data, source=""):
         "cf_ray": bool(cf_ray_v),
     })
 
+    is_ssh = (source == "ssh")
+
     with state.lock:
-        state.counters["total"] += 1
-        state.counters["current_second"] += 1
-        try:
-            state.counters["bytes_served"] += int(data.get("size") or 0)
-        except (TypeError, ValueError):
-            pass
+        if is_ssh:
+            state.ssh_total += 1
+            state.ssh_ips[ip] += 1
+        else:
+            state.counters["total"] += 1
+            state.counters["current_second"] += 1
+            try:
+                state.counters["bytes_served"] += int(data.get("size") or 0)
+            except (TypeError, ValueError):
+                pass
 
-        state.ips[ip] += 1
-        state.domains[host] += 1
-        state.referers[ref] += 1
-        state.paths[uri] += 1
-        state.status_codes[status] += 1
+            state.ips[ip] += 1
+            state.domains[host] += 1
+            state.referers[ref] += 1
+            state.paths[uri] += 1
+            state.status_codes[status] += 1
 
-        if 400 <= status < 500:
-            state.counters["client_err"] += 1
-        elif status >= 500:
-            state.counters["server_err"] += 1
+            if 400 <= status < 500:
+                state.counters["client_err"] += 1
+            elif status >= 500:
+                state.counters["server_err"] += 1
 
         resolved = state.geo_cache.get(ip)
         if resolved is not None:

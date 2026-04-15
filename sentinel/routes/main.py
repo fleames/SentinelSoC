@@ -59,12 +59,8 @@ def data():
                 }
             )
 
-        ssh_ips = [
-            (ip, counts.get("/ssh", 0))
-            for ip, counts in state.ip_paths.items()
-            if counts.get("/ssh", 0) > 0
-        ]
-        ssh_top_raw = sorted(ssh_ips, key=lambda x: -x[1])[:20]
+        ssh_top_raw = state.ssh_ips.most_common(20)
+        ssh_total_now = state.ssh_total
         ssh_enriched = []
         for tip, ssh_hits in ssh_top_raw:
             g = state.ip_geo.get(tip, {})
@@ -157,6 +153,7 @@ def data():
             "geo": geo_snapshot,
             "top_threats": threats_enriched,
             "ssh_attackers": ssh_enriched,
+            "ssh_total": ssh_total_now,
             "alerts": alerts_list,
             "botnet_campaigns": campaigns_snapshot,
             "rps_timeline": rps_timeline_snapshot,

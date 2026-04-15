@@ -108,9 +108,8 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .hist-day-select{
   min-width:190px;max-width:230px;padding:6px 10px;
   border-radius:8px;border:1px solid rgba(255,255,255,0.09);
-  background:rgba(255,255,255,0.04);color:var(--text);
+  background:#07101e;color:var(--text);
   font-family:var(--mono);font-size:12px;outline:none;
-  backdrop-filter:blur(8px);
   transition:border-color var(--transition),box-shadow var(--transition),color var(--transition);
 }
 .hist-day-select:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim),0 0 20px rgba(0,212,255,0.1);}
@@ -466,8 +465,10 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .bn-modal-asn-row .asn{color:var(--text-dim);font-family:var(--mono);font-size:10px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bn-conf-badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;}
 /* Muted IPs */
-.ban-inp{flex:1;min-width:0;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.09);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color var(--transition),box-shadow var(--transition);backdrop-filter:blur(8px);}
+.ban-inp{flex:1;min-width:0;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.09);background:#07101e;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color var(--transition),box-shadow var(--transition);}
 .ban-inp:focus{border-color:var(--border-bright);box-shadow:0 0 0 3px var(--accent-dim),0 0 24px rgba(0,229,255,0.12);}
+select.ban-inp,select.ban-note-sel{appearance:auto;background:#07101e;color:var(--text);}
+select.ban-inp option,select.ban-note-sel option{background:#07101e;color:#dde8f5;}
 .ban-actions{display:flex;gap:8px;margin-bottom:10px;align-items:stretch;}
 .ban-row{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.025);font-family:var(--mono);font-size:11px;}
 .ban-row .kip{flex:1;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1;}

@@ -472,6 +472,11 @@ header{display:flex;align-items:center;justify-content:space-between;flex-wrap:w
 .ban-row{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.025);font-family:var(--mono);font-size:11px;}
 .ban-row .kip{flex:1;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1;}
 .ban-row .cnt{color:var(--warn);flex-shrink:0;}
+.ban-note-sel{flex:0 0 auto;max-width:130px;}
+.ban-note{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-family:var(--mono);background:rgba(100,116,139,0.25);color:#94a3b8;flex-shrink:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ban-note.ban-note-audit{background:rgba(139,92,246,0.2);color:#c4b5fd;}
+.ban-note.ban-note-http{background:rgba(239,68,68,0.18);color:#fca5a5;}
+.ban-note.ban-note-auto{background:rgba(245,158,11,0.18);color:#fcd34d;}
 /* Settings modal */
 .settings-modal{max-width:680px;width:100%;}
 .settings-group{margin-bottom:20px;}

@@ -706,10 +706,21 @@ function renderBanList(d){
   var el=document.getElementById('banList');
   var bans=d.banned_ips||[];
   var mh=d.muted_hits||{};
+  var notes=d.ban_notes||{};
   if(!bans.length){ el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No muted IPs</span></div>'; return; }
   el.innerHTML=bans.map(function(ip){
     var c=mh[ip]||0;
+    var note=notes[ip]||'';
+    var noteHtml='';
+    if(note){
+      var cls='ban-note';
+      if(note==='audit') cls+=' ban-note-audit';
+      else if(note==='http_abuse') cls+=' ban-note-http';
+      else if(note.indexOf('auto:')===0) cls+=' ban-note-auto';
+      noteHtml='<span class="'+cls+'" title="'+escapeAttr(note)+'">'+escapeHtml(note)+'</span>';
+    }
     return '<div class="ban-row"><span class="kip" title="'+escapeAttr(ip)+'">'+escapeHtml(ip)+'</span>'
+      +noteHtml
       +'<span class="cnt">'+c+' excl.</span>'
       +'<button type="button" class="toolbtn" data-unban="'+escapeAttr(ip)+'">Unmute</button></div>';
   }).join('');
@@ -1296,12 +1307,17 @@ document.getElementById('sourcesList').addEventListener('click',async function(e
 document.getElementById('btnBan').addEventListener('click',async function(){
   var ip=document.getElementById('banIp').value.trim();
   if(!ip) return;
+  var noteEl=document.getElementById('banNote');
+  var note=noteEl?noteEl.value.trim():'';
   try{
-    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+    var body={ip:ip};
+    if(note) body.note=note;
+    var r=await fetch('/api/ban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json().catch(function(){ return {}; });
     if(!r.ok){ alert(j.error||'Mute failed'); return; }
     warnIptables(j);
     document.getElementById('banIp').value='';
+    if(noteEl) noteEl.value='';
     await load(true);
   }catch(e){ alert('Mute failed'); }
 });

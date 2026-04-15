@@ -206,6 +206,13 @@
         <p id="iptablesHintP" style="margin:0 0 10px;font-size:11px;color:var(--muted);line-height:1.5"></p>
         <div class="ban-actions">
           <input type="text" id="banIp" class="ban-inp" placeholder="IPv4 / IPv6" autocomplete="off"/>
+          <select id="banNote" class="ban-inp ban-note-sel">
+            <option value="">— reason —</option>
+            <option value="http_abuse">HTTP abuse</option>
+            <option value="audit">Audit ban</option>
+            <option value="scanner">Scanner</option>
+            <option value="brute_force">Brute force</option>
+          </select>
           <button type="button" class="toolbtn danger" id="btnBan">Mute</button>
         </div>
         <div id="banList"></div>

@@ -79,16 +79,26 @@ def _load_bans():
     try:
         with open(config.BAN_LIST_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if not isinstance(data, list):
-            return
-        new = set()
-        for x in data:
-            n = _normalize_client_ip(str(x))
-            if n:
-                new.add(n)
+        new_ips = set()
+        new_notes = {}
+        if isinstance(data, list):
+            # Legacy format: plain list of IPs, no notes.
+            for x in data:
+                n = _normalize_client_ip(str(x))
+                if n:
+                    new_ips.add(n)
+        elif isinstance(data, dict):
+            # New format: {"ip": "note", ...}
+            for x, note in data.items():
+                n = _normalize_client_ip(str(x))
+                if n:
+                    new_ips.add(n)
+                    if note:
+                        new_notes[n] = str(note)
         with state.lock:
             state.banned_ips.clear()
-            state.banned_ips.update(new)
+            state.banned_ips.update(new_ips)
+            state.ban_notes.update(new_notes)
     except (OSError, json.JSONDecodeError, TypeError):
         pass
 
@@ -98,12 +108,12 @@ def _save_bans():
         return
     try:
         with state.lock:
-            lst = sorted(state.banned_ips)
+            payload = {ip: state.ban_notes.get(ip, "") for ip in sorted(state.banned_ips)}
         d = os.path.dirname(config.BAN_LIST_PATH) or "."
         os.makedirs(d, exist_ok=True)
         tmp = config.BAN_LIST_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(lst, f)
+            json.dump(payload, f, indent=2)
         os.replace(tmp, config.BAN_LIST_PATH)
     except OSError:
         pass
@@ -289,6 +299,7 @@ def _save_parsed_state():
             "suspicious_hit_buffer": list(state.suspicious_hit_buffer),
             "stream_parse_debug": dict(state.stream_parse_debug),
             "muted_hits": {str(k): int(v) for k, v in state.muted_hits.items()},
+            "ban_notes": {str(k): str(v) for k, v in state.ban_notes.items()},
             "sources": [[str(k), int(v)] for k, v in state.sources.items()],
             "ssh_total": int(state.ssh_total),
             "ssh_ips": [[str(k), int(v)] for k, v in state.ssh_ips.items()],
@@ -452,6 +463,9 @@ def _load_parsed_state():
 
         state.muted_hits.clear()
         state.muted_hits.update({str(k): int(v) for k, v in dict(data.get("muted_hits", {})).items()})
+
+        state.ban_notes.clear()
+        state.ban_notes.update({str(k): str(v) for k, v in dict(data.get("ban_notes", {})).items() if v})
 
         state.sources.clear()
         state.sources.update({str(k): int(v) for k, v in list(data.get("sources", []))})

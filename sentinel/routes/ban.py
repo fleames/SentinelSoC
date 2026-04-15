@@ -21,16 +21,25 @@ def api_ban():
         return jsonify({"error": "invalid ip"}), 400
     if _is_protected_ip(nip):
         return jsonify({"error": "cannot ban private/local/reserved addresses"}), 400
+    note = str(body.get("note") or request.args.get("note") or "").strip()[:200]
     with state.lock:
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)
+        if note:
+            state.ban_notes[nip] = note
+        else:
+            state.ban_notes.pop(nip, None)
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, True)
-    _audit_write("mute", _audit_actor(), {"ip": nip})
+    audit_detail = {"ip": nip}
+    if note:
+        audit_detail["note"] = note
+    _audit_write("mute", _audit_actor(), audit_detail)
     return jsonify(
         {
             "ok": True,
             "banned_ips": sorted(state.banned_ips),
+            "ban_notes": dict(state.ban_notes),
             "iptables": {"enabled": config.IPTABLES_ENABLED, "ok": ok_ipt, "error": ipt_err},
         }
     )
@@ -46,6 +55,7 @@ def api_unban():
     with state.lock:
         state.banned_ips.discard(nip)
         state.muted_hits.pop(nip, None)
+        state.ban_notes.pop(nip, None)
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, False)
     _audit_write("unban", _audit_actor(), {"ip": nip})
@@ -53,6 +63,7 @@ def api_unban():
         {
             "ok": True,
             "banned_ips": sorted(state.banned_ips),
+            "ban_notes": dict(state.ban_notes),
             "iptables": {"enabled": config.IPTABLES_ENABLED, "ok": ok_ipt, "error": ipt_err},
         }
     )

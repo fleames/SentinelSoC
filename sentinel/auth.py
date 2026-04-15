@@ -74,6 +74,7 @@ def _auto_ban(ip, reason):
             return
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)
+        state.ban_notes[nip] = f"auto: {reason}"
     _save_bans()
     _iptables_drop(nip, True)
     _audit_write("auto_ban", "sentinel", {"ip": nip, "reason": reason})

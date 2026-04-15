@@ -72,6 +72,7 @@ stream_parse_debug = {
 # Manual "mute": excluded from dashboard stats.
 banned_ips = set()
 muted_hits = Counter()
+ban_notes = {}   # ip -> analyst note e.g. "http_abuse", "audit", "auto: <reason>"
 
 # Botnet campaign tracking
 suspicious_hit_buffer = deque(maxlen=10000)

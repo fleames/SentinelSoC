@@ -2,6 +2,8 @@
 """
 sentinel/routes/ssh.py -- SSH attack dashboard page and data endpoint.
 """
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, render_template
 
 from sentinel import config, state
@@ -66,4 +68,5 @@ def api_ssh_data():
         "top_users": top_users,
         "top_countries": [[c, n] for c, n in top_countries],
         "top_asns": top_asns,
+        "server_time": datetime.now(timezone.utc).isoformat(),
     })

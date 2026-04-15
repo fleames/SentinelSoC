@@ -120,6 +120,11 @@ def reset_dashboard_state():
         state.ssh_ip_key_fps.clear()
         state.ssh_key_fp_ips.clear()
         state.ssh_actor_labels.clear()
+        state.ssh_kex_fps.clear()
+        state.ssh_ip_kex_fp.clear()
+        state.ssh_kex_fp_ips.clear()
+        state.ssh_ip_src_ports.clear()
+        state.ssh_ip_port_entropy.clear()
     with state.reputation_lock:
         state.reputation_queue.clear()
         state.reputation_seen.clear()

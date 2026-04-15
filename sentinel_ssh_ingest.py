@@ -25,6 +25,7 @@ Environment variables:
   SSH_BATCH_SIZE        Max events per POST request (default: 20)
   SSH_FLUSH_INTERVAL    Seconds between batch flushes (default: 5)
 """
+import hashlib
 import json
 import os
 import re
@@ -80,66 +81,115 @@ _NO_NEG_RE   = re.compile(r"Unable to negotiate with ([\da-fA-F:.]+)(?:\s+port\s
 _RESET_RE    = re.compile(r"Connection reset by (?:invalid user )?\S+ ([\da-fA-F:.]+)(?:\s+port\s+(\d+))?")
 _RECV_RE     = re.compile(r"Received disconnect from ([\da-fA-F:.]+) port (\d+).*\[preauth\]")
 
+# ---------------------------------------------------------------------------
+# KEX fingerprinting (LogLevel VERBOSE) — PID-correlated accumulation
+# ---------------------------------------------------------------------------
+_PID_RE         = re.compile(r"sshd\[(\d+)\]")
+_KEX_ALGO_RE    = re.compile(r"kex: algorithm: (\S+)")
+_KEX_CIPHER_RE  = re.compile(r"kex: client->server cipher: (\S+)")
+_KEX_HKEY_RE    = re.compile(r"kex: host key algorithm: (\S+)")
+
+# PID -> {'algo': str, 'cipher': str, 'hkey': str}
+_pending_kex = {}
+
+
+def _kex_fp_from_pid(pid):
+    """Pop and hash the accumulated kex fields for a PID. Returns fp or None."""
+    if not pid:
+        return None
+    kex = _pending_kex.pop(pid, None)
+    if not kex:
+        return None
+    parts = ":".join(filter(None, [
+        kex.get("algo", ""),
+        kex.get("cipher", ""),
+        kex.get("hkey", ""),
+    ]))
+    return hashlib.sha256(parts.encode()).hexdigest()[:16] if parts else None
+
 
 def _parse_line(line):
-    """Return (ip, user, auth_method, src_port, key_fp) or None."""
+    """Return (ip, user, auth_method, src_port, key_fp, kex_fp) or None."""
     if "sshd" not in line and "ssh" not in line.lower():
         return None
+
+    # Extract PID for kex correlation (present in file mode; synthesised in journal mode)
+    pid_m = _PID_RE.search(line)
+    pid = pid_m.group(1) if pid_m else None
+
+    # VERBOSE: accumulate kex fields keyed by PID — do not emit an event
+    if pid:
+        m = _KEX_ALGO_RE.search(line)
+        if m:
+            _pending_kex.setdefault(pid, {})["algo"] = m.group(1)
+            # Prune if table grows too large (stale PIDs from sessions with no auth event)
+            if len(_pending_kex) > 500:
+                for old in list(_pending_kex)[:250]:
+                    del _pending_kex[old]
+            return None
+        m = _KEX_CIPHER_RE.search(line)
+        if m:
+            _pending_kex.setdefault(pid, {})["cipher"] = m.group(1)
+            return None
+        m = _KEX_HKEY_RE.search(line)
+        if m:
+            _pending_kex.setdefault(pid, {})["hkey"] = m.group(1)
+            return None
 
     # VERBOSE: publickey with fingerprint — check before generic _FAILED_RE
     m = _FAILED_PK_FP_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4)
+        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4), _kex_fp_from_pid(pid)
 
     # VERBOSE: postponed publickey (key presented but not yet accepted/rejected)
     m = _POSTPONED_PK_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4)
+        return m.group(2), m.group(1), "publickey", int(m.group(3)) if m.group(3) else None, m.group(4), _kex_fp_from_pid(pid)
 
     # INFO: generic Failed password / publickey
     m = _FAILED_RE.search(line)
     if m:
-        return m.group(3), m.group(2), m.group(1), int(m.group(4)) if m.group(4) else None, None
+        return m.group(3), m.group(2), m.group(1), int(m.group(4)) if m.group(4) else None, None, _kex_fp_from_pid(pid)
 
     m = _INVALID_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None, _kex_fp_from_pid(pid)
 
     m = _DISCON_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)), None
+        return m.group(2), m.group(1), "password", int(m.group(3)), None, _kex_fp_from_pid(pid)
 
     m = _CLOSED_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)), None
+        return m.group(2), m.group(1), "password", int(m.group(3)), None, _kex_fp_from_pid(pid)
 
     m = _MAXAUTH_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None
+        return m.group(2), m.group(1), "password", int(m.group(3)) if m.group(3) else None, None, _kex_fp_from_pid(pid)
 
     m = _KEX_RE.search(line)
     if m:
-        return m.group(2), m.group(1), "scanner", None, None
+        return m.group(2), m.group(1), "scanner", None, None, _kex_fp_from_pid(pid)
 
     m = _NO_IDENT_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None, _kex_fp_from_pid(pid)
 
     m = _BAD_VER_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None, _kex_fp_from_pid(pid)
 
     m = _NO_NEG_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None, _kex_fp_from_pid(pid)
 
     m = _RESET_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None
+        return m.group(1), None, "scanner", int(m.group(2)) if m.group(2) else None, None, _kex_fp_from_pid(pid)
 
     m = _RECV_RE.search(line)
     if m:
-        return m.group(1), None, "scanner", int(m.group(2)), None
+        return m.group(1), None, "scanner", int(m.group(2)), None, _kex_fp_from_pid(pid)
 
     return None
 
@@ -148,7 +198,7 @@ def _parse_line(line):
 # Event builder
 # ---------------------------------------------------------------------------
 
-def _make_event(ip, user=None, auth_method="", src_port=None, key_fp=None):
+def _make_event(ip, user=None, auth_method="", src_port=None, key_fp=None, kex_fp=None):
     ua = f"SSH-client/{user}" if user else "SSH-client"
     hdrs = {"User-Agent": [ua]}
     if auth_method:
@@ -157,6 +207,8 @@ def _make_event(ip, user=None, auth_method="", src_port=None, key_fp=None):
         hdrs["X-SSH-Src-Port"] = [str(src_port)]
     if key_fp:
         hdrs["X-SSH-Key-Fp"] = [key_fp[:100]]
+    if kex_fp:
+        hdrs["X-SSH-Kex-Fp"] = [kex_fp[:16]]
     return {
         "msg":       "handled request",
         "ts":        datetime.now(timezone.utc).isoformat(),
@@ -228,7 +280,13 @@ def _lines_from_journal():
                     if isinstance(msg, list):
                         msg = "".join(chr(b) if isinstance(b, int) else b for b in msg)
                     if msg:
-                        yield msg
+                        # Synthesise "sshd[PID]:" prefix so _parse_line can
+                        # correlate kex: lines with auth events by PID.
+                        pid = entry.get("_PID") or entry.get("SYSLOG_PID") or ""
+                        if pid:
+                            yield f"sshd[{pid}]: {msg}"
+                        else:
+                            yield msg
                 except (json.JSONDecodeError, ValueError):
                     continue
             proc.wait()
@@ -329,8 +387,8 @@ def main():
     for line in _line_source(mode):
         parsed = _parse_line(line)
         if parsed:
-            ip, user, auth_method, src_port, key_fp = parsed
-            batch.append(_make_event(ip, user, auth_method, src_port, key_fp))
+            ip, user, auth_method, src_port, key_fp, kex_fp = parsed
+            batch.append(_make_event(ip, user, auth_method, src_port, key_fp, kex_fp))
             if len(batch) >= BATCH_SIZE:
                 _post_batch(batch)
                 batch = []

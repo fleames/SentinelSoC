@@ -127,6 +127,13 @@ UA_BURST_WINDOW_S = int(os.environ.get("SENTINEL_UA_BURST_WINDOW_S", "60") or "6
 # TLS/JA3 fingerprint sharing: flag fingerprint when seen across this many distinct IPs.
 TLS_FP_SHARED_THRESHOLD = int(os.environ.get("SENTINEL_TLS_FP_THRESHOLD", "5") or "5")
 
+# SSH KEX fingerprint sharing: flag when same cipher/KEX suite seen from this many distinct IPs.
+SSH_KEX_SHARED_THRESHOLD = int(os.environ.get("SENTINEL_SSH_KEX_SHARED_THRESHOLD", "3") or "3")
+
+# SSH source-port entropy threshold: tag low_port_entropy when Shannon bits fall below this.
+# Random ephemeral ports ~16 bits; botnet with 10 fixed ports ~3.3 bits.
+SSH_PORT_ENTROPY_LOW = float(os.environ.get("SENTINEL_SSH_PORT_ENTROPY_LOW", "4.0") or "4.0")
+
 # Slow-and-low: minimum hours active before the pattern is considered deliberate.
 SLOW_LOW_MIN_HOURS = float(os.environ.get("SENTINEL_SLOW_LOW_MIN_HOURS", "2") or "2")
 # Minimum unique non-static paths visited before flagging.

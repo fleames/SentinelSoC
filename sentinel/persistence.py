@@ -323,6 +323,17 @@ def _save_parsed_state():
             "ssh_actor_labels": dict(state.ssh_actor_labels),
             "ip_notes": dict(state.ip_notes),
             "ip_categories": dict(state.ip_categories),
+            "ssh_kex_fps": list(state.ssh_kex_fps.most_common(2000)),
+            "ssh_ip_kex_fp": dict(state.ssh_ip_kex_fp),
+            "ssh_kex_fp_ips": {
+                str(fp): sorted(ips)
+                for fp, ips in state.ssh_kex_fp_ips.items()
+            },
+            "ssh_ip_port_entropy": dict(state.ssh_ip_port_entropy),
+            "ssh_ip_src_ports": {
+                str(ip): list(ports)
+                for ip, ports in state.ssh_ip_src_ports.items()
+            },
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -510,6 +521,30 @@ def _load_parsed_state():
         state.ip_categories.update(
             {str(k): str(v) for k, v in dict(data.get("ip_categories", {})).items()}
         )
+
+        state.ssh_kex_fps.clear()
+        state.ssh_kex_fps.update(
+            {str(k): int(v) for k, v in list(data.get("ssh_kex_fps", []))}
+        )
+        state.ssh_ip_kex_fp.clear()
+        state.ssh_ip_kex_fp.update(
+            {str(ip): str(fp) for ip, fp in dict(data.get("ssh_ip_kex_fp", {})).items()}
+        )
+        state.ssh_kex_fp_ips.clear()
+        for fp, ips in dict(data.get("ssh_kex_fp_ips", {})).items():
+            state.ssh_kex_fp_ips[str(fp)] = set(str(ip) for ip in list(ips))
+
+        state.ssh_ip_port_entropy.clear()
+        state.ssh_ip_port_entropy.update(
+            {str(ip): float(v) for ip, v in dict(data.get("ssh_ip_port_entropy", {})).items()}
+        )
+        state.ssh_ip_src_ports.clear()
+        from collections import deque as _deque
+        for ip, ports in dict(data.get("ssh_ip_src_ports", {})).items():
+            state.ssh_ip_src_ports[str(ip)] = _deque(
+                (int(p) for p in list(ports) if isinstance(p, (int, float))),
+                maxlen=200,
+            )
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

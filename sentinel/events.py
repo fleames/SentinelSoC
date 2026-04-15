@@ -3,6 +3,7 @@
 sentinel/events.py -- _process_log_event: ingest one access-log dict into state.
 """
 import hashlib
+import math
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,17 @@ from sentinel.rules import _apply_rules
 from sentinel.ua import _ua_tags
 from sentinel.persistence import _append_history_event
 from sentinel.enrichment import enqueue_reputation
+
+
+def _ssh_port_entropy(ports):
+    """Shannon entropy in bits of the source-port histogram for one IP.
+    Returns 0.0 when fewer than 10 samples are available."""
+    if len(ports) < 10:
+        return 0.0
+    from collections import Counter as _Counter
+    counts = _Counter(ports)
+    total = sum(counts.values())
+    return -sum((c / total) * math.log2(c / total) for c in counts.values() if c > 0)
 
 
 def _update_ssh_wordlist_fp(ip):
@@ -118,7 +130,9 @@ def _process_log_event(data, source=""):
 
     is_ssh = (source == "ssh")
     ssh_auth_method = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""
-    ssh_key_fp = (_header_first(headers, "X-SSH-Key-Fp", "x-ssh-key-fp") or "") if is_ssh else ""
+    ssh_key_fp  = (_header_first(headers, "X-SSH-Key-Fp",  "x-ssh-key-fp")  or "") if is_ssh else ""
+    ssh_kex_fp  = (_header_first(headers, "X-SSH-Kex-Fp",  "x-ssh-kex-fp")  or "") if is_ssh else ""
+    ssh_src_port_raw = (_header_first(headers, "X-SSH-Src-Port", "x-ssh-src-port") or "") if is_ssh else ""
 
     with state.lock:
         if is_ssh:
@@ -144,6 +158,25 @@ def _process_log_event(data, source=""):
                 state.ssh_key_fp_ips[ssh_key_fp].add(ip)
                 if len(state.ssh_key_fp_ips[ssh_key_fp]) >= 2:
                     state.ip_tags[ip].add("shared_ssh_key")
+            # SSH KEX / cipher-suite fingerprint (LogLevel VERBOSE kex: lines)
+            if ssh_kex_fp:
+                state.ssh_kex_fps[ssh_kex_fp] += 1
+                state.ssh_ip_kex_fp[ip] = ssh_kex_fp
+                state.ssh_kex_fp_ips[ssh_kex_fp].add(ip)
+                if len(state.ssh_kex_fp_ips[ssh_kex_fp]) >= config.SSH_KEX_SHARED_THRESHOLD:
+                    state.ip_tags[ip].add("shared_ssh_kex")
+            # Source port entropy — track port history and tag sequential/fixed-port botnets
+            if ssh_src_port_raw:
+                try:
+                    state.ssh_ip_src_ports[ip].append(int(ssh_src_port_raw))
+                    ports = state.ssh_ip_src_ports[ip]
+                    if len(ports) >= 10 and len(ports) % 10 == 0:
+                        ent = _ssh_port_entropy(ports)
+                        state.ssh_ip_port_entropy[ip] = round(ent, 2)
+                        if ent < config.SSH_PORT_ENTROPY_LOW:
+                            state.ip_tags[ip].add("low_port_entropy")
+                except (ValueError, TypeError):
+                    pass
         else:
             state.counters["total"] += 1
             state.counters["current_second"] += 1

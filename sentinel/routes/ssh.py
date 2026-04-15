@@ -132,6 +132,9 @@ def api_ssh_ip():
         wordlist_fp = state.ssh_ip_wordlist_fp.get(ip, "")
         campaign_size = len(state.ssh_wordlist_campaigns.get(wordlist_fp, set())) if wordlist_fp else 0
         key_fps = sorted(state.ssh_ip_key_fps.get(ip, set()))
+        kex_fp = state.ssh_ip_kex_fp.get(ip, "")
+        kex_cluster_size = len(state.ssh_kex_fp_ips.get(kex_fp, set())) if kex_fp else 0
+        port_entropy = state.ssh_ip_port_entropy.get(ip)
         note = state.ip_notes.get(ip, "")
         category = state.ip_categories.get(ip, "")
 
@@ -148,6 +151,9 @@ def api_ssh_ip():
         "auth_methods": auth_methods,
         "wordlist_fp": wordlist_fp,
         "campaign_size": campaign_size,
+        "kex_fp": kex_fp,
+        "kex_cluster_size": kex_cluster_size,
+        "port_entropy": port_entropy,
         "key_fps": [
             {"fp": fp, "shared_ips": len(state.ssh_key_fp_ips.get(fp, set()))}
             for fp in key_fps
@@ -212,14 +218,24 @@ def _build_actor(cluster_id, actor_type, fp, ips_set):
                 if len(state.ssh_key_fp_ips.get(kfp, set())) >= 2:
                     cross_id = f"key:{kfp}"
                     cross[cross_id] = cross.get(cross_id, 0) + 1
-    else:
+    elif actor_type == "key":
         for ip in ip_list:
             wfp = state.ssh_ip_wordlist_fp.get(ip, "")
             if wfp and len(state.ssh_wordlist_campaigns.get(wfp, set())) >= 2:
                 cross_id = f"wordlist:{wfp}"
                 cross[cross_id] = cross.get(cross_id, 0) + 1
+    else:  # kex
+        for ip in ip_list:
+            wfp = state.ssh_ip_wordlist_fp.get(ip, "")
+            if wfp and len(state.ssh_wordlist_campaigns.get(wfp, set())) >= 2:
+                cross_id = f"wordlist:{wfp}"
+                cross[cross_id] = cross.get(cross_id, 0) + 1
+            for kfp in state.ssh_ip_key_fps.get(ip, set()):
+                if len(state.ssh_key_fp_ips.get(kfp, set())) >= 2:
+                    cross_id = f"key:{kfp}"
+                    cross[cross_id] = cross.get(cross_id, 0) + 1
 
-    fp_short = fp[:8] if actor_type == "wordlist" else fp[:28]
+    fp_short = fp[:8] if actor_type == "wordlist" else fp[:16] if actor_type == "kex" else fp[:28]
     return {
         "id": cluster_id,
         "type": actor_type,
@@ -251,6 +267,10 @@ def api_ssh_actors():
             if len(ips) < 2:
                 continue
             actors.append(_build_actor(f"key:{fp}", "key", fp, ips))
+        for fp, ips in state.ssh_kex_fp_ips.items():
+            if len(ips) < 2:
+                continue
+            actors.append(_build_actor(f"kex:{fp}", "kex", fp, ips))
     actors.sort(key=lambda a: (-a["ip_count"], -a["total_hits"]))
     return jsonify({"actors": actors, "total": len(actors)})
 

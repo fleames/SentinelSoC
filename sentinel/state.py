@@ -115,7 +115,14 @@ ssh_wordlist_campaigns = defaultdict(set)   # fingerprint -> set(ips) using same
 ssh_key_fps = Counter()                     # "RSA SHA256:xxx" -> total attempts (LogLevel VERBOSE)
 ssh_ip_key_fps = defaultdict(set)           # ip -> set of SSH public key fingerprints tried
 ssh_key_fp_ips = defaultdict(set)           # key_fp -> set of IPs using that key
-ssh_actor_labels = {}                       # actor_id ("wordlist:fp" | "key:fp") -> user label
+ssh_actor_labels = {}                       # actor_id ("wordlist:fp" | "key:fp" | "kex:fp") -> user label
+# SSH KEX / cipher-suite fingerprint (LogLevel VERBOSE kex: lines)
+ssh_kex_fps = Counter()                     # kex_fp -> total occurrences across all IPs
+ssh_ip_kex_fp = {}                          # ip -> most recent 16-char kex fingerprint
+ssh_kex_fp_ips = defaultdict(set)           # kex_fp -> set of IPs sharing that cipher/KEX suite
+# SSH source-port entropy
+ssh_ip_src_ports = defaultdict(lambda: deque(maxlen=200))  # ip -> recent source ports (capped)
+ssh_ip_port_entropy = {}                    # ip -> Shannon entropy in bits (updated per 10 new ports)
 ip_notes = {}                               # ip -> freeform analyst note (persisted, not cleared on reset)
 ip_categories = {}                          # ip -> category string e.g. "botnet", "scanner", "apt", custom
 behavior_signal_counts = Counter()

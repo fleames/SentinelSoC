@@ -51,10 +51,12 @@
 .actor-card:hover{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.16);transform:translateY(-1px);}
 .actor-card.labeled{border-left:3px solid var(--accent);}
 .actor-card.type-key{border-left:3px solid #fbbf24;}
+.actor-card.type-kex{border-left:3px solid #a78bfa;}
 .actor-card-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .actor-type-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;padding:2px 7px;border-radius:4px;flex-shrink:0;font-family:var(--mono);}
 .actor-type-badge.wordlist{background:rgba(99,102,241,.18);color:#818cf8;border:1px solid rgba(99,102,241,.3);}
 .actor-type-badge.key{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25);}
+.actor-type-badge.kex{background:rgba(167,139,250,.12);color:#a78bfa;border:1px solid rgba(167,139,250,.25);}
 .actor-name{font-size:13px;font-weight:600;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .actor-name.unnamed{color:var(--muted);font-weight:400;font-style:italic;}
 .actor-stats{display:flex;gap:12px;margin-bottom:8px;}
@@ -576,6 +578,36 @@ function renderSshDrill(d, body){
       }).join('');
   }
 
+  // KEX / cipher-suite fingerprint
+  var kexFpHtml='';
+  if(d.kex_fp){
+    var kexColor=d.kex_cluster_size>=5?'var(--danger)':d.kex_cluster_size>=2?'var(--warn)':'#a78bfa';
+    kexFpHtml='<div class="drill-section-title">KEX / cipher-suite fingerprint</div>'
+      +'<div style="display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px">'
+        +'<span style="background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.25);border-radius:5px;padding:3px 10px;color:#a78bfa;letter-spacing:.06em">'+esc(d.kex_fp)+'</span>'
+        +(d.kex_cluster_size>=2
+          ?'<span style="color:'+kexColor+'"><strong>'+d.kex_cluster_size+'</strong> IPs share this cipher suite</span>'
+          :'<span style="color:var(--muted)">unique suite (no cluster yet)</span>')
+      +'</div>';
+  }
+
+  // Source-port entropy
+  var portEntropyHtml='';
+  if(d.port_entropy!==null&&d.port_entropy!==undefined){
+    var ent=parseFloat(d.port_entropy)||0;
+    var entColor=ent<4?'var(--danger)':ent<8?'var(--warn)':'#4ade80';
+    var entLabel=ent<4?'Low — likely fixed/sequential (botnet)':ent<8?'Medium':'High — randomised ephemeral ports';
+    var entPct=Math.min(100,Math.round((ent/16)*100));
+    portEntropyHtml='<div class="drill-section-title">Source-port entropy</div>'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'
+        +'<div style="flex:1;height:6px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden">'
+          +'<div style="width:'+entPct+'%;height:100%;background:'+entColor+';border-radius:3px"></div>'
+        +'</div>'
+        +'<span style="font-family:var(--mono);font-size:11px;color:'+entColor+';min-width:36px;text-align:right">'+ent.toFixed(1)+'b</span>'
+      +'</div>'
+      +'<div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:8px">'+entLabel+'</div>';
+  }
+
   var usersHtml='<div class="drill-section-title">Usernames tried ('+users.length+')</div>';
   if(!users.length){
     usersHtml+='<div style="color:var(--muted);font-family:var(--mono);font-size:11px;padding:8px 0">No username data</div>';
@@ -610,6 +642,8 @@ function renderSshDrill(d, body){
     +authHtml
     +campHtml
     +keyFpHtml
+    +kexFpHtml
+    +portEntropyHtml
     +'<div class="drill-section-title">Timing</div>'
     +'<div class="drill-meta">'
       +'<div>First seen: <span>'+tsLabel(b.first_seen)+'</span></div>'
@@ -952,10 +986,12 @@ function renderActors(actors){
     var flags=(a.top_countries||[]).slice(0,5).map(function(c){return flag(c[0])||esc(c[0]);}).join(' ');
     var crossHtml=a.cross&&a.cross.length
       ?'<div class="actor-cross">&#x26A1; linked via '+(a.cross[0].id.split(':')[0])+' fingerprint ('+a.cross[0].shared_ips+' shared IPs)</div>':'';
-    var cardClass='actor-card'+(a.type==='key'?' type-key':'')+(label?' labeled':'');
+    var typeClass=a.type==='key'?' type-key':a.type==='kex'?' type-kex':'';
+    var typeLabel=a.type==='wordlist'?'WORDLIST':a.type==='key'?'SSH KEY':'KEX SUITE';
+    var cardClass='actor-card'+typeClass+(label?' labeled':'');
     return '<div class="'+cardClass+'" onclick="openActorModal(\''+esc(a.id)+'\')">'
       +'<div class="actor-card-hd">'
-        +'<span class="actor-type-badge '+esc(a.type)+'">'+(a.type==='wordlist'?'WORDLIST':'SSH KEY')+'</span>'
+        +'<span class="actor-type-badge '+esc(a.type)+'">'+typeLabel+'</span>'
         +nameHtml
       +'</div>'
       +'<div class="actor-stats">'
@@ -978,9 +1014,11 @@ function openActorModal(actorId){
   var badge=document.getElementById('actorModalTypeBadge');
   var title=document.getElementById('actorModalTitle');
   var body=document.getElementById('actorModalBody');
-  badge.className='actor-type-badge '+(a.type==='wordlist'?'wordlist':'key');
-  badge.textContent=a.type==='wordlist'?'WORDLIST':'SSH KEY';
-  title.textContent=a.label||(a.type==='wordlist'?'Wordlist Cluster ':'SSH Key Cluster ')+a.fp_short;
+  var typeLabel=a.type==='wordlist'?'WORDLIST':a.type==='key'?'SSH KEY':'KEX SUITE';
+  var clusterLabel=a.type==='wordlist'?'Wordlist Cluster ':a.type==='key'?'SSH Key Cluster ':'KEX Cluster ';
+  badge.className='actor-type-badge '+a.type;
+  badge.textContent=typeLabel;
+  title.textContent=a.label||(clusterLabel+a.fp_short);
   renderActorModal(a,body);
   bg.classList.add('open');
 }

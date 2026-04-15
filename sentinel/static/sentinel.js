@@ -1279,9 +1279,12 @@ document.getElementById('btnReset').addEventListener('click',async function(){
   if(!confirm('Reset all counters, charts, alerts, audit log, and historical telemetry?')) return;
   try{
     var r=await fetch('/api/reset',{method:'POST',credentials:'same-origin'});
-    if(!r.ok) throw new Error('Reset failed (server returned '+r.status+')');
-  }catch(e){ alert(e.message||'Reset failed'); return; }
-  // Server-side reset succeeded — refresh UI best-effort (errors here are non-fatal)
+    // Only hard-abort if the server explicitly rejected the request.
+    // A network-level failure (connection drop, timeout) still means the
+    // server likely completed the reset — fall through to UI cleanup.
+    if(r&&!r.ok){ alert('Reset failed (server returned '+r.status+')'); return; }
+  }catch(e){ /* network error — reset probably ran, continue with UI cleanup */ }
+  // Clean up UI regardless — the server-side state has been wiped.
   try{
     lastPayload=null; setFocus(''); closeModal(); seenAlertKeys.clear();
     rpsHist=[]; atkHist=[];

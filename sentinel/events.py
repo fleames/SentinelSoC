@@ -242,23 +242,26 @@ def _process_log_event(data, source=""):
     if country_u == config.PLACEHOLDER_CC or asn_u == config.PLACEHOLDER_ASN:
         enqueue_geo(ip)
 
-    _append_history_event(
-        {
-            "ts": ts,
-            "ts_epoch": ts_epoch,
-            "ip": ip,
-            "host": host,
-            "ua": ua[:200],
-            "accept": (accept_v or "")[:120],
-            "fingerprint": fp,
-            "uri": uri[:220],
-            "path": path_bucket,
-            "status": int(status),
-            "score": int(s),
-            "country": country_u,
-            "asn": asn_u[:120],
-            "tags": _ua_tags(ua),
-        }
-    )
+    # Skip logging zero-score static assets to history — they are browser noise
+    # (JS chunks, CSS, fonts, icons) and clutter the historical events view.
+    if s > 0 or not _is_static_asset(path_bucket):
+        _append_history_event(
+            {
+                "ts": ts,
+                "ts_epoch": ts_epoch,
+                "ip": ip,
+                "host": host,
+                "ua": ua[:200],
+                "accept": (accept_v or "")[:120],
+                "fingerprint": fp,
+                "uri": uri[:220],
+                "path": path_bucket,
+                "status": int(status),
+                "score": int(s),
+                "country": country_u,
+                "asn": asn_u[:120],
+                "tags": _ua_tags(ua),
+            }
+        )
 
     return "ok"

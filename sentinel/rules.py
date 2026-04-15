@@ -79,7 +79,10 @@ DETECTION_RULES = [
     {
         "name": "static_asset",
         "skip": True,
-        "match": lambda e: _is_static_asset((e.get("uri") or "").split("?")[0]),
+        "match": lambda e: (
+            _is_static_asset((e.get("uri") or "").split("?")[0])
+            or _is_static_asset(e.get("path") or "")
+        ),
         "score": 0,
     },
     # -- High-value paths --

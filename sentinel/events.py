@@ -128,6 +128,11 @@ def _process_log_event(data, source=""):
         "asn": asn,
         "cf_ray": bool(cf_ray_v),
     })
+    # Belt-and-suspenders: static assets must never carry a non-zero score
+    # even if a rule slipped through (e.g. origin_bypass on direct-CDN hits).
+    if s and _is_static_asset(path_bucket):
+        s = 0
+        matched_rules = []
 
     is_ssh = (source == "ssh")
     ssh_auth_method = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""

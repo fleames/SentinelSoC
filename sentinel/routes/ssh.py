@@ -2,6 +2,7 @@
 """
 sentinel/routes/ssh.py -- SSH attack dashboard page and data endpoint.
 """
+from collections import Counter
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, render_template, request
@@ -154,3 +155,110 @@ def api_ssh_ip():
         },
         "days_seen": days_seen,
     })
+
+
+def _build_actor(cluster_id, actor_type, fp, ips_set):
+    """Build a threat actor dict from a cluster. Must be called inside state.lock."""
+    ip_list = sorted(ips_set, key=lambda x: -state.ssh_ips.get(x, 0))
+    total_hits = sum(state.ssh_ips.get(ip, 0) for ip in ip_list)
+
+    # Aggregate usernames across all IPs
+    username_counter = Counter()
+    for ip in ip_list:
+        username_counter.update(state.ssh_ip_users.get(ip, {}))
+
+    # Countries weighted by hits
+    country_counts = Counter()
+    asn_counts = Counter()
+    for ip in ip_list:
+        g = state.ip_geo.get(ip, {})
+        if isinstance(g, dict):
+            hits = state.ssh_ips.get(ip, 0)
+            c = g.get("country", "")
+            if c and c not in ("?", "??"):
+                country_counts[c] += hits
+            a = (g.get("asn") or "")[:80]
+            if a and a != "Unknown":
+                asn_counts[a] += hits
+
+    # First / last seen from behavior
+    first_seen = None
+    last_seen = None
+    for ip in ip_list:
+        b = state.ip_behavior.get(ip, {})
+        fs = b.get("first_seen") or 0
+        ls = b.get("last_seen") or 0
+        if fs and (first_seen is None or fs < first_seen):
+            first_seen = fs
+        if ls and (last_seen is None or ls > last_seen):
+            last_seen = ls
+
+    # Days active: union of all IP day sets
+    all_days = set()
+    for ip in ip_list:
+        all_days.update(state.ip_days_seen.get(ip, set()))
+
+    # Cross-signals: wordlist clusters linked to key clusters (shared IPs)
+    cross = {}
+    if actor_type == "wordlist":
+        for ip in ip_list:
+            for kfp in state.ssh_ip_key_fps.get(ip, set()):
+                if len(state.ssh_key_fp_ips.get(kfp, set())) >= 2:
+                    cross_id = f"key:{kfp}"
+                    cross[cross_id] = cross.get(cross_id, 0) + 1
+    else:
+        for ip in ip_list:
+            wfp = state.ssh_ip_wordlist_fp.get(ip, "")
+            if wfp and len(state.ssh_wordlist_campaigns.get(wfp, set())) >= 2:
+                cross_id = f"wordlist:{wfp}"
+                cross[cross_id] = cross.get(cross_id, 0) + 1
+
+    fp_short = fp[:8] if actor_type == "wordlist" else fp[:28]
+    return {
+        "id": cluster_id,
+        "type": actor_type,
+        "fp": fp,
+        "fp_short": fp_short,
+        "label": state.ssh_actor_labels.get(cluster_id, ""),
+        "ip_count": len(ip_list),
+        "total_hits": total_hits,
+        "top_ips": ip_list[:10],
+        "top_countries": [[c, n] for c, n in country_counts.most_common(6)],
+        "top_asns": [[a, n] for a, n in asn_counts.most_common(4)],
+        "top_usernames": [u for u, _ in username_counter.most_common(15)],
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "days_active": len(all_days),
+        "cross": [{"id": cid, "shared_ips": cnt} for cid, cnt in sorted(cross.items(), key=lambda x: -x[1])],
+    }
+
+
+@bp.route("/api/ssh/actors")
+def api_ssh_actors():
+    actors = []
+    with state.lock:
+        for fp, ips in state.ssh_wordlist_campaigns.items():
+            if len(ips) < 2:
+                continue
+            actors.append(_build_actor(f"wordlist:{fp}", "wordlist", fp, ips))
+        for fp, ips in state.ssh_key_fp_ips.items():
+            if len(ips) < 2:
+                continue
+            actors.append(_build_actor(f"key:{fp}", "key", fp, ips))
+    actors.sort(key=lambda a: (-a["ip_count"], -a["total_hits"]))
+    return jsonify({"actors": actors, "total": len(actors)})
+
+
+@bp.route("/api/ssh/actor/label", methods=["POST"])
+def api_ssh_actor_label():
+    data = request.json or {}
+    actor_id = str(data.get("id", "")).strip()
+    label = str(data.get("label", "")).strip()[:80]
+    if not actor_id:
+        return jsonify({"error": "id required"}), 400
+    with state.lock:
+        if label:
+            state.ssh_actor_labels[actor_id] = label
+        else:
+            state.ssh_actor_labels.pop(actor_id, None)
+    return jsonify({"ok": True, "id": actor_id, "label": label})

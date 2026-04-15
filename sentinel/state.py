@@ -115,6 +115,7 @@ ssh_wordlist_campaigns = defaultdict(set)   # fingerprint -> set(ips) using same
 ssh_key_fps = Counter()                     # "RSA SHA256:xxx" -> total attempts (LogLevel VERBOSE)
 ssh_ip_key_fps = defaultdict(set)           # ip -> set of SSH public key fingerprints tried
 ssh_key_fp_ips = defaultdict(set)           # key_fp -> set of IPs using that key
+ssh_actor_labels = {}                       # actor_id ("wordlist:fp" | "key:fp") -> user label
 behavior_signal_counts = Counter()
 history_buckets = {}
 history_lock = threading.Lock()

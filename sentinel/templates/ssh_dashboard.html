@@ -44,6 +44,50 @@
 .ulist-bar{height:100%;background:linear-gradient(90deg,var(--danger),#ff6b6b);border-radius:3px;}
 .ulist-count{color:var(--danger);font-weight:700;min-width:40px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
 
+/* ── Threat Actors full-width section ── */
+.actors-section{padding:0 24px 16px;max-width:1720px;margin:0 auto;}
+.actors-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;margin-top:10px;}
+.actor-card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px 16px;cursor:pointer;transition:background var(--transition),border-color var(--transition),transform var(--transition);position:relative;}
+.actor-card:hover{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.16);transform:translateY(-1px);}
+.actor-card.labeled{border-left:3px solid var(--accent);}
+.actor-card.type-key{border-left:3px solid #fbbf24;}
+.actor-card-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.actor-type-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;padding:2px 7px;border-radius:4px;flex-shrink:0;font-family:var(--mono);}
+.actor-type-badge.wordlist{background:rgba(99,102,241,.18);color:#818cf8;border:1px solid rgba(99,102,241,.3);}
+.actor-type-badge.key{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25);}
+.actor-name{font-size:13px;font-weight:600;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.actor-name.unnamed{color:var(--muted);font-weight:400;font-style:italic;}
+.actor-stats{display:flex;gap:12px;margin-bottom:8px;}
+.actor-stat{display:flex;flex-direction:column;align-items:center;}
+.actor-stat .sv{font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text);line-height:1;}
+.actor-stat .sl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:2px;}
+.actor-stat.danger .sv{color:var(--danger);}
+.actor-stat.warn .sv{color:var(--warn);}
+.actor-countries{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;}
+.actor-fp{font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.25);letter-spacing:.04em;}
+.actor-cross{font-size:10px;color:#818cf8;margin-top:4px;}
+
+/* Actor detail modal */
+.actor-modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(5px);z-index:1100;align-items:center;justify-content:center;}
+.actor-modal-bg.open{display:flex;}
+.actor-modal{background:var(--card);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 28px 90px rgba(0,0,0,.85);width:min(760px,96vw);max-height:88vh;overflow-y:auto;}
+.actor-modal-hd{display:flex;align-items:center;gap:10px;padding:18px 22px 14px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;border-radius:14px 14px 0 0;}
+.actor-modal-title{font-size:16px;font-weight:700;color:var(--text);flex:1;}
+.actor-modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;padding:2px 8px;border-radius:4px;}
+.actor-modal-close:hover{background:rgba(255,255,255,.07);color:var(--text);}
+.actor-modal-body{padding:20px 22px;}
+.actor-label-form{display:flex;gap:8px;align-items:center;margin-bottom:16px;}
+.actor-label-input{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);font-size:13px;padding:7px 12px;outline:none;font-family:inherit;}
+.actor-label-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,153,255,.15);}
+.actor-label-btn{background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;padding:7px 16px;cursor:pointer;flex-shrink:0;}
+.actor-label-btn:hover{filter:brightness(1.15);}
+.actor-section-title{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:14px 0 6px;font-weight:600;}
+.actor-ip-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-family:var(--mono);font-size:11px;border-bottom:1px solid rgba(255,255,255,.04);}
+.actor-ip-row:last-child{border-bottom:none;}
+.actor-user-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-family:var(--mono);font-size:11px;}
+.actor-user-bar-track{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;}
+.actor-user-bar{height:100%;background:linear-gradient(90deg,#818cf8,#a5b4fc);border-radius:3px;}
+
 /* Auth method breakdown strip */
 .auth-strip{display:flex;gap:0;margin:0 24px 16px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.08);}
 .auth-seg{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 4px;font-family:var(--mono);transition:background var(--transition);}
@@ -171,6 +215,29 @@
   <div class="auth-seg sc"><div class="as-val" id="authSc">0</div><div class="as-lbl">Scanner probes</div></div>
 </div>
 
+<!-- Threat Actors section -->
+<div class="actors-section" id="actorsSection" style="display:none">
+  <div style="display:flex;align-items:baseline;gap:10px">
+    <h2 style="margin:0;font-size:13px;color:var(--text)">Threat Actors <span class="hint" id="actorsHint"></span></h2>
+    <span style="font-size:10px;color:var(--muted)">identified by credential wordlist and SSH key fingerprints &mdash; click to detail &amp; label</span>
+  </div>
+  <div class="actors-grid" id="actorsGrid"></div>
+</div>
+
+<!-- Actor detail modal -->
+<div class="actor-modal-bg" id="actorModalBg">
+  <div class="actor-modal">
+    <div class="actor-modal-hd">
+      <span class="actor-type-badge" id="actorModalTypeBadge">TYPE</span>
+      <span class="actor-modal-title" id="actorModalTitle">Actor</span>
+      <button class="actor-modal-close" id="actorModalClose">&times;</button>
+    </div>
+    <div class="actor-modal-body" id="actorModalBody">
+      <div style="color:var(--muted);font-family:var(--mono);font-size:11px;text-align:center;padding:24px 0">Loading...</div>
+    </div>
+  </div>
+</div>
+
 <div class="ssh-layout">
 
   <!-- Main column -->
@@ -252,17 +319,9 @@
       <div style="max-height:240px;overflow-y:auto" id="asnList"></div>
     </div>
 
-    <!-- Credential Campaigns -->
-    <div class="card" id="campaignsCard" style="display:none">
-      <h2>Credential campaigns <span class="hint">IPs sharing the same wordlist fingerprint</span></h2>
-      <div style="max-height:300px;overflow-y:auto" id="campaignsList"></div>
-    </div>
-
-    <!-- SSH Public Key Fingerprints (LogLevel VERBOSE) -->
-    <div class="card" id="keyFpCard" style="display:none">
-      <h2>Attacker SSH keys <span class="hint">public key fingerprints &mdash; requires LogLevel VERBOSE</span></h2>
-      <div style="max-height:300px;overflow-y:auto" id="keyFpList"></div>
-    </div>
+    <!-- Placeholder divs kept for JS compatibility, hidden -->
+    <div id="campaignsCard" style="display:none"><div id="campaignsList"></div></div>
+    <div id="keyFpCard" style="display:none"><div id="keyFpList"></div></div>
 
   </div>
 
@@ -755,6 +814,206 @@ function applyData(d){
   document.getElementById('foot').textContent='Server time: '+(d.server_time||'—');
 }
 
+/* ── Threat Actors ── */
+var _actorCache={};  // id -> actor data for modal re-use
+
+function timeAgoShort(epoch){
+  if(!epoch) return '—';
+  var s=Math.round((Date.now()/1000)-epoch);
+  if(s<60) return s+'s ago';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+
+function renderActors(actors){
+  var sec=document.getElementById('actorsSection');
+  var grid=document.getElementById('actorsGrid');
+  var hint=document.getElementById('actorsHint');
+  if(!actors||!actors.length){if(sec)sec.style.display='none';return;}
+  sec.style.display='';
+  hint.textContent=actors.length+' cluster'+(actors.length===1?'':'s')+' identified';
+  actors.forEach(function(a){_actorCache[a.id]=a;});
+  grid.innerHTML=actors.map(function(a){
+    var label=a.label||'';
+    var nameHtml=label
+      ?'<span class="actor-name">'+esc(label)+'</span>'
+      :'<span class="actor-name unnamed">Unnamed &mdash; click to label</span>';
+    var flags=(a.top_countries||[]).slice(0,5).map(function(c){return flag(c[0])||esc(c[0]);}).join(' ');
+    var crossHtml=a.cross&&a.cross.length
+      ?'<div class="actor-cross">&#x26A1; linked via '+(a.cross[0].id.split(':')[0])+' fingerprint ('+a.cross[0].shared_ips+' shared IPs)</div>':'';
+    var cardClass='actor-card'+(a.type==='key'?' type-key':'')+(label?' labeled':'');
+    return '<div class="'+cardClass+'" onclick="openActorModal(\''+esc(a.id)+'\')">'
+      +'<div class="actor-card-hd">'
+        +'<span class="actor-type-badge '+esc(a.type)+'">'+(a.type==='wordlist'?'WORDLIST':'SSH KEY')+'</span>'
+        +nameHtml
+      +'</div>'
+      +'<div class="actor-stats">'
+        +'<div class="actor-stat danger"><div class="sv">'+fmt(a.ip_count)+'</div><div class="sl">IPs</div></div>'
+        +'<div class="actor-stat danger"><div class="sv">'+fmt(a.total_hits)+'</div><div class="sl">Hits</div></div>'
+        +'<div class="actor-stat warn"><div class="sv">'+fmt(a.days_active||0)+'</div><div class="sl">Days</div></div>'
+        +'<div class="actor-stat"><div class="sv" style="font-size:11px;color:var(--muted)">'+timeAgoShort(a.last_seen)+'</div><div class="sl">Last seen</div></div>'
+      +'</div>'
+      +(flags?'<div class="actor-countries">'+flags+'</div>':'')
+      +'<div class="actor-fp">'+esc(a.fp_short)+'</div>'
+      +crossHtml
+    +'</div>';
+  }).join('');
+}
+
+function openActorModal(actorId){
+  var a=_actorCache[actorId];
+  if(!a) return;
+  var bg=document.getElementById('actorModalBg');
+  var badge=document.getElementById('actorModalTypeBadge');
+  var title=document.getElementById('actorModalTitle');
+  var body=document.getElementById('actorModalBody');
+  badge.className='actor-type-badge '+(a.type==='wordlist'?'wordlist':'key');
+  badge.textContent=a.type==='wordlist'?'WORDLIST':'SSH KEY';
+  title.textContent=a.label||(a.type==='wordlist'?'Wordlist Cluster ':'SSH Key Cluster ')+a.fp_short;
+  renderActorModal(a,body);
+  bg.classList.add('open');
+}
+
+function renderActorModal(a,body){
+  var maxU=a.top_usernames&&a.top_usernames.length?
+    (function(){var m=0;return m;}()):1;
+
+  // Build top usernames section — we only have names, not counts here, so show as pills
+  var usernamesHtml='';
+  if(a.top_usernames&&a.top_usernames.length){
+    usernamesHtml='<div class="actor-section-title">Top usernames across cluster ('+a.top_usernames.length+'+ unique)</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px">'
+      +a.top_usernames.map(function(u){
+        return '<span class="user-pill">'+esc(u)+'</span>';
+      }).join('')
+      +'</div>';
+  }
+
+  // Countries
+  var countriesHtml='';
+  if(a.top_countries&&a.top_countries.length){
+    var maxC=a.top_countries[0][1]||1;
+    countriesHtml='<div class="actor-section-title">Origin countries</div>'
+      +a.top_countries.map(function(c){
+        var pct=Math.max(2,Math.round((c[1]/maxC)*100));
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:11px">'
+          +'<span style="font-size:15px;width:20px">'+( flag(c[0])||'🌐')+'</span>'
+          +'<span style="min-width:28px;color:var(--muted)">'+esc(c[0])+'</span>'
+          +'<div style="flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">'
+            +'<div style="width:'+pct+'%;height:100%;background:var(--danger);border-radius:3px"></div>'
+          +'</div>'
+          +'<span style="color:var(--muted);min-width:44px;text-align:right">'+fmt(c[1])+'</span>'
+        +'</div>';
+      }).join('');
+  }
+
+  // ASNs
+  var asnHtml='';
+  if(a.top_asns&&a.top_asns.length){
+    var maxA=a.top_asns[0][1]||1;
+    asnHtml='<div class="actor-section-title">Infrastructure (ASNs)</div>'
+      +a.top_asns.map(function(as){
+        var pct=Math.max(2,Math.round((as[1]/maxA)*100));
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:10px">'
+          +'<span style="flex:1;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(as[0])+'">'+esc(as[0])+'</span>'
+          +'<div style="width:60px;flex-shrink:0;height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">'
+            +'<div style="width:'+pct+'%;height:100%;background:#818cf8;border-radius:2px"></div>'
+          +'</div>'
+          +'<span style="color:var(--muted);min-width:44px;text-align:right;flex-shrink:0">'+fmt(as[1])+'</span>'
+        +'</div>';
+      }).join('');
+  }
+
+  // IPs
+  var ipsHtml='<div class="actor-section-title">IPs in cluster ('+a.ip_count+')</div>';
+  ipsHtml+=a.top_ips.map(function(ip){
+    return '<div class="actor-ip-row">'
+      +'<span class="drill-ip-clickable" onclick="document.getElementById(\'actorModalBg\').classList.remove(\'open\');openSshDrill(\''+esc(ip)+'\')">'+esc(ip)+'</span>'
+    +'</div>';
+  }).join('');
+  if(a.ip_count>a.top_ips.length){
+    ipsHtml+='<div style="font-size:10px;color:var(--muted);padding:4px 0;font-family:var(--mono)">+ '+(a.ip_count-a.top_ips.length)+' more IPs in cluster</div>';
+  }
+
+  // Cross-signals
+  var crossHtml='';
+  if(a.cross&&a.cross.length){
+    crossHtml='<div class="actor-section-title">Cross-signal correlation</div>'
+      +'<div style="font-size:11px;font-family:var(--mono);display:flex;flex-direction:column;gap:5px">'
+      +a.cross.map(function(c){
+        var ctype=c.id.split(':')[0];
+        var cfp=c.id.split(':').slice(1).join(':').slice(0,12);
+        return '<div style="display:flex;align-items:center;gap:8px">'
+          +'<span style="background:rgba(129,140,248,.12);color:#818cf8;border-radius:4px;padding:2px 7px;font-size:9px;text-transform:uppercase;letter-spacing:.08em">'+esc(ctype)+'</span>'
+          +'<span style="color:#94a3b8">'+esc(cfp)+'&hellip;</span>'
+          +'<span style="color:var(--warn)">'+(c.shared_ips)+' shared IPs</span>'
+        +'</div>';
+      }).join('')
+    +'</div>';
+  }
+
+  // Timeline
+  var timeHtml='<div class="actor-section-title">Activity window</div>'
+    +'<div style="font-family:var(--mono);font-size:11px;display:flex;flex-direction:column;gap:3px;color:var(--muted)">'
+      +(a.first_seen?'<div>First seen: <span style="color:var(--text-dim)">'+new Date(a.first_seen*1000).toISOString().replace('T',' ').slice(0,19)+' UTC</span></div>':'')
+      +(a.last_seen?'<div>Last seen: <span style="color:var(--text-dim)">'+new Date(a.last_seen*1000).toISOString().replace('T',' ').slice(0,19)+' UTC</span></div>':'')
+      +(a.days_active?'<div>Active across <strong style="color:var(--text)">'+a.days_active+'</strong> calendar days</div>':'')
+    +'</div>';
+
+  body.innerHTML=
+    // Stats row
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">'
+      +'<div class="drill-stat danger"><div class="ds-label">IPs</div><div class="ds-val">'+fmt(a.ip_count)+'</div></div>'
+      +'<div class="drill-stat danger"><div class="ds-label">Total hits</div><div class="ds-val">'+fmt(a.total_hits)+'</div></div>'
+      +'<div class="drill-stat warn"><div class="ds-label">Days active</div><div class="ds-val">'+fmt(a.days_active||0)+'</div></div>'
+      +'<div class="drill-stat"><div class="ds-label">Countries</div><div class="ds-val">'+fmt(a.top_countries?a.top_countries.length:0)+'</div></div>'
+    +'</div>'
+    // Label form
+    +'<div class="actor-section-title">Label this actor</div>'
+    +'<div class="actor-label-form">'
+      +'<input class="actor-label-input" id="actorLabelInput" placeholder="e.g. Mirai variant, China botnet, CVE scanner..." value="'+esc(a.label||'')+'">'
+      +'<button class="actor-label-btn" onclick="saveActorLabel(\''+esc(a.id)+'\')">Save</button>'
+    +'</div>'
+    // Fingerprint
+    +'<div style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);margin-bottom:14px">fingerprint: '+esc(a.fp)+'</div>'
+    +usernamesHtml
+    +countriesHtml
+    +asnHtml
+    +crossHtml
+    +timeHtml
+    +ipsHtml;
+}
+
+function saveActorLabel(actorId){
+  var input=document.getElementById('actorLabelInput');
+  var label=input?input.value.trim():'';
+  fetch('/api/ssh/actor/label',{
+    method:'POST',
+    credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:actorId,label:label}),
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){
+      // Update cache + title
+      if(_actorCache[actorId]) _actorCache[actorId].label=d.label;
+      var title=document.getElementById('actorModalTitle');
+      if(title) title.textContent=d.label||(actorId.startsWith('wordlist:')?'Wordlist Cluster ':'SSH Key Cluster ')+actorId.split(':').slice(1).join(':').slice(0,8);
+      // Refresh actors grid
+      loadActors();
+    }
+  }).catch(function(){});
+}
+
+async function loadActors(){
+  try{
+    var res=await fetch('/api/ssh/actors',{credentials:'same-origin'});
+    if(!res.ok) return;
+    var d=await res.json();
+    renderActors(d.actors||[]);
+  }catch(e){}
+}
+
 /* ── polling ── */
 var lastLoad=null;
 function timeAgoStr(ts){
@@ -782,20 +1041,34 @@ async function load(){
 document.addEventListener('DOMContentLoaded',function(){
   initChart();
   load();
+  loadActors();
   setInterval(load,1500);
+  setInterval(loadActors,6000);
   setInterval(function(){
     document.getElementById('updatedAgo').textContent=timeAgoStr(lastLoad);
   },1000);
 
-  // Modal close handlers
+  // IP drill-down modal close
   document.getElementById('sshDrillClose').addEventListener('click',function(){
     document.getElementById('sshDrillBg').classList.remove('open');
   });
   document.getElementById('sshDrillBg').addEventListener('click',function(e){
     if(e.target===this) this.classList.remove('open');
   });
+
+  // Actor modal close
+  document.getElementById('actorModalClose').addEventListener('click',function(){
+    document.getElementById('actorModalBg').classList.remove('open');
+  });
+  document.getElementById('actorModalBg').addEventListener('click',function(e){
+    if(e.target===this) this.classList.remove('open');
+  });
+
   document.addEventListener('keydown',function(e){
-    if(e.key==='Escape') document.getElementById('sshDrillBg').classList.remove('open');
+    if(e.key==='Escape'){
+      document.getElementById('sshDrillBg').classList.remove('open');
+      document.getElementById('actorModalBg').classList.remove('open');
+    }
   });
 });
 </script>

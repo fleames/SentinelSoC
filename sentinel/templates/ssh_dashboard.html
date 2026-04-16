@@ -359,7 +359,12 @@
 
     <!-- Top attacking IPs -->
     <div class="card">
-      <h2>Top attacking IPs <span class="hint" id="ipHint"></span></h2>
+      <h2>Top attacking IPs <span class="hint" id="ipHint"></span>
+        <span style="float:right;display:inline-flex;gap:6px">
+          <a href="/api/ssh/ips/export" download class="export-btn">TXT</a>
+          <a href="/api/ssh/ips/export?fmt=json" download class="export-btn">JSON</a>
+        </span>
+      </h2>
       <div class="ssh-th-grid">
         <span>#</span>
         <span>IP Address</span>

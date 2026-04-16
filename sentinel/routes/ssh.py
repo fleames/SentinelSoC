@@ -137,6 +137,30 @@ def api_ssh_data():
     })
 
 
+@bp.route("/api/ssh/ips/export")
+def api_ssh_ips_export():
+    fmt = request.args.get("fmt", "txt").lower()
+    with state.lock:
+        rows = state.ssh_ips.most_common()   # sorted by hit count desc
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    if fmt == "json":
+        data = [{"ip": ip, "hits": n} for ip, n in rows]
+        return Response(
+            json.dumps(data, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename=ssh_ips_{ts}.json"},
+        )
+
+    # Default: one IP per line
+    return Response(
+        "\n".join(ip for ip, _ in rows),
+        mimetype="text/plain",
+        headers={"Content-Disposition": f"attachment; filename=ssh_ips_{ts}.txt"},
+    )
+
+
 @bp.route("/api/ssh/combos/export")
 def api_ssh_combos_export():
     fmt = request.args.get("fmt", "csv").lower()

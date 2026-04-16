@@ -79,12 +79,16 @@ def api_ssh_data():
         # Auth method totals
         auth_totals = dict(state.ssh_auth_method_totals)
 
-        # Top tried passwords (PAM capture)
-        top_passwords = [
-            {"password": p, "attempts": n}
-            for p, n in state.ssh_passwords.most_common(50)
-        ]
-        pw_capture_active = bool(state.ssh_passwords)
+        # Top credential combos (PAM capture): "user||password" -> split for API
+        top_combos = []
+        for combo_key, n in state.ssh_combos.most_common(50):
+            parts = combo_key.split("||", 1)
+            top_combos.append({
+                "user": parts[0] if len(parts) == 2 else "",
+                "password": parts[1] if len(parts) == 2 else combo_key,
+                "attempts": n,
+            })
+        pw_capture_active = bool(state.ssh_combos)
 
         # Top SSH public key fingerprints (LogLevel VERBOSE)
         top_key_fps = []
@@ -127,7 +131,7 @@ def api_ssh_data():
         "auth_totals": auth_totals,
         "campaigns": campaigns,
         "top_key_fps": top_key_fps,
-        "top_passwords": top_passwords,
+        "top_combos": top_combos,
         "pw_capture_active": pw_capture_active,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })
@@ -157,7 +161,7 @@ def api_ssh_ip():
         port_entropy = state.ssh_ip_port_entropy.get(ip)
         note = state.ip_notes.get(ip, "")
         category = state.ip_categories.get(ip, "")
-        ip_passwords = list(state.ssh_ip_passwords.get(ip, Counter()).most_common(30))
+        ip_combos_raw = list(state.ssh_ip_combos.get(ip, Counter()).most_common(30))
 
     users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
     return jsonify({
@@ -187,7 +191,12 @@ def api_ssh_ip():
         "days_seen": days_seen,
         "note": note,
         "category": category,
-        "top_passwords": [{"password": p, "attempts": n} for p, n in ip_passwords],
+        "top_combos": [
+            {"user": k.split("||", 1)[0] if "||" in k else "",
+             "password": k.split("||", 1)[1] if "||" in k else k,
+             "attempts": n}
+            for k, n in ip_combos_raw
+        ],
     })
 
 

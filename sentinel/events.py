@@ -150,13 +150,15 @@ def _process_log_event(data, source=""):
     ssh_password     = (_header_first(headers, "X-SSH-Password", "x-ssh-password") or "") if is_ssh else ""
 
     with state.lock:
-        # Password-only event from the PAM log: just update password counters.
+        # Password-only event from the PAM log: store user+password combo.
         # All other SSH counters (ssh_total, ssh_ips, usernames, etc.) are driven
         # by the regular auth.log/journal events to avoid double-counting.
         if is_ssh and ssh_pw_event:
             if ip and ssh_password:
-                state.ssh_passwords[ssh_password] += 1
-                state.ssh_ip_passwords[ip][ssh_password] += 1
+                ssh_user_pw = ua[len("SSH-client/"):].strip() if ua.startswith("SSH-client/") else ""
+                combo_key = f"{ssh_user_pw}||{ssh_password}"
+                state.ssh_combos[combo_key] += 1
+                state.ssh_ip_combos[ip][combo_key] += 1
             return "ok"
 
         if is_ssh:

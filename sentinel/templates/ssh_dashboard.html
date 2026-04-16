@@ -144,24 +144,27 @@
 /* No-data state */
 .ssh-empty{color:var(--muted);font-family:var(--mono);font-size:11px;padding:20px 14px;text-align:center;}
 
-/* Password list rows (mirrors .ulist-row but danger-coloured bar) */
-.pwlist-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.025);font-family:var(--mono);font-size:11px;}
+/* Credential combo list rows */
+.pwlist-row{display:grid;grid-template-columns:22px minmax(80px,1fr) minmax(80px,1.2fr) 52px;gap:6px;align-items:center;padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.025);font-family:var(--mono);font-size:11px;}
 .pwlist-row:last-child{border-bottom:none;}
 .pwlist-row:hover{background:rgba(255,255,255,.025);}
-.pwlist-rank{color:var(--muted);font-size:10px;min-width:20px;text-align:right;flex-shrink:0;}
-.pwlist-name{flex:1;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;letter-spacing:.02em;}
-.pwlist-name.top3{color:#f87171;font-weight:600;}
-.pwlist-bar-track{width:80px;flex-shrink:0;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;}
-.pwlist-bar{height:100%;background:linear-gradient(90deg,var(--danger),#ff6b6b);border-radius:3px;}
-.pwlist-count{color:var(--danger);font-weight:700;min-width:40px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
+.pwlist-rank{color:var(--muted);font-size:10px;text-align:right;}
+.pwlist-user{color:#fbbf24;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.pwlist-user.top3{font-weight:600;}
+.pwlist-pw{color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;letter-spacing:.02em;}
+.pwlist-pw.top3{color:#f87171;font-weight:600;}
+.pwlist-count{color:var(--danger);font-weight:700;text-align:right;font-variant-numeric:tabular-nums;}
 
-/* Passwords section inside the IP drill-down modal */
-.drill-pw-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-family:var(--mono);font-size:11px;}
-.drill-pw-name{flex:1;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-.drill-pw-name.top1{color:#f87171;font-weight:600;}
-.drill-pw-bar-track{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;max-width:80px;}
-.drill-pw-bar{height:100%;background:linear-gradient(90deg,var(--danger),#f87171);border-radius:3px;}
-.drill-pw-count{color:var(--danger);font-weight:700;min-width:36px;text-align:right;flex-shrink:0;}
+/* Combo header row */
+.pwlist-hdr{display:grid;grid-template-columns:22px minmax(80px,1fr) minmax(80px,1.2fr) 52px;gap:6px;padding:4px 10px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border-bottom:1px solid rgba(255,255,255,.06);}
+
+/* Combo rows inside the IP drill-down modal */
+.drill-pw-row{display:grid;grid-template-columns:minmax(60px,1fr) minmax(80px,1.2fr) 44px;gap:6px;align-items:center;padding:4px 0;font-family:var(--mono);font-size:11px;}
+.drill-pw-user{color:#fbbf24;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.drill-pw-user.top1{font-weight:600;}
+.drill-pw-pw{color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.drill-pw-pw.top1{color:#f87171;font-weight:600;}
+.drill-pw-count{color:var(--danger);font-weight:700;text-align:right;font-variant-numeric:tabular-nums;}
 
 /* Category badges */
 .cat-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:1px 6px;border-radius:3px;font-family:var(--mono);white-space:nowrap;vertical-align:middle;}
@@ -373,9 +376,9 @@
       <div style="max-height:340px;overflow-y:auto" id="userList"></div>
     </div>
 
-    <!-- Most tried passwords (PAM capture) -->
+    <!-- Credential combos (PAM capture) -->
     <div class="card" id="pwCard">
-      <h2>Most tried passwords <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span></h2>
+      <h2>Credential combos tried <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span></h2>
       <div style="max-height:340px;overflow-y:auto" id="pwList"></div>
     </div>
 
@@ -784,17 +787,18 @@ function renderSshDrill(d, body){
     }).join('');
   }
 
-  var pwds=d.top_passwords||[];
+  var combos=d.top_combos||[];
   var pwHtml='';
-  if(pwds.length){
-    var maxPw=pwds[0].attempts||1;
-    pwHtml='<div class="drill-section-title">Passwords tried ('+pwds.length+')</div>'
-      +pwds.map(function(p,i){
-        var pct=Math.max(2,Math.round((p.attempts/maxPw)*100));
+  if(combos.length){
+    pwHtml='<div class="drill-section-title">Credential combos tried ('+combos.length+')</div>'
+      +'<div style="display:grid;grid-template-columns:minmax(60px,1fr) minmax(80px,1.2fr) 44px;gap:6px;padding:2px 0 5px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">'
+        +'<span>Username</span><span>Password</span><span style="text-align:right">Tries</span>'
+      +'</div>'
+      +combos.map(function(c,i){
         return '<div class="drill-pw-row">'
-          +'<span class="drill-pw-name'+(i===0?' top1':'')+'" title="'+esc(p.password)+'">'+esc(p.password)+'</span>'
-          +'<div class="drill-pw-bar-track"><div class="drill-pw-bar" style="width:'+pct+'%"></div></div>'
-          +'<span class="drill-pw-count">'+fmt(p.attempts)+'</span>'
+          +'<span class="drill-pw-user'+(i===0?' top1':'')+'" title="'+esc(c.user)+'">'+esc(c.user||'\u2014')+'</span>'
+          +'<span class="drill-pw-pw'+(i===0?' top1':'')+'" title="'+esc(c.password)+'">'+esc(c.password)+'</span>'
+          +'<span class="drill-pw-count">'+fmt(c.attempts)+'</span>'
           +'</div>';
       }).join('');
   }
@@ -978,8 +982,8 @@ function renderUserList(users){
   }).join('');
 }
 
-/* ── password list ── */
-function renderPasswordList(passwords, active){
+/* ── credential combo list ── */
+function renderPasswordList(combos, active){
   var el=document.getElementById('pwList');
   var hint=document.getElementById('pwHint');
   if(!el) return;
@@ -988,7 +992,7 @@ function renderPasswordList(passwords, active){
     el.innerHTML='<div class="ssh-empty" style="text-align:left;padding:12px 14px">'
       +'<strong style="color:var(--text)">Setup required</strong><br>'
       +'<span style="line-height:1.7">1. Copy <code>scripts/sentinel-ssh-pw-log.sh</code> to <code>/usr/local/bin/</code><br>'
-      +'2. <code>chmod 700</code> + <code>chown root:root</code> it<br>'
+      +'2. <code>chmod 700 + chown root:root</code> it<br>'
       +'3. Add to <code>/etc/pam.d/sshd</code> (before @include common-auth):<br>'
       +'<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.05);padding:3px 8px;border-radius:4px">'
       +'auth optional pam_exec.so expose_authtok quiet /usr/local/bin/sentinel-ssh-pw-log.sh</code><br>'
@@ -996,21 +1000,21 @@ function renderPasswordList(passwords, active){
       +'</div>';
     return;
   }
-  if(hint) hint.textContent='live PAM capture \u2014 '+fmt(passwords.length? passwords.reduce(function(a,p){return a+p.attempts;},0) :0)+' total attempts';
-  if(!passwords||!passwords.length){
-    el.innerHTML='<div class="ssh-empty">No password data yet</div>';
+  var total=combos.reduce(function(a,c){return a+c.attempts;},0);
+  if(hint) hint.textContent='live PAM capture \u2014 '+fmt(total)+' attempts, '+fmt(combos.length)+' unique combos';
+  if(!combos||!combos.length){
+    el.innerHTML='<div class="ssh-empty">No credential data yet</div>';
     return;
   }
-  var max=passwords[0].attempts||1;
-  el.innerHTML=passwords.map(function(p,i){
-    var pct=Math.max(2,Math.round((p.attempts/max)*100));
-    return '<div class="pwlist-row">'
-      +'<span class="pwlist-rank">'+(i+1)+'</span>'
-      +'<span class="pwlist-name'+(i<3?' top3':'')+'" title="'+esc(p.password)+'">'+esc(p.password)+'</span>'
-      +'<div class="pwlist-bar-track"><div class="pwlist-bar" style="width:'+pct+'%"></div></div>'
-      +'<span class="pwlist-count">'+fmt(p.attempts)+'</span>'
-      +'</div>';
-  }).join('');
+  el.innerHTML='<div class="pwlist-hdr"><span>#</span><span>Username</span><span>Password</span><span style="text-align:right">Tries</span></div>'
+    +combos.map(function(c,i){
+      return '<div class="pwlist-row">'
+        +'<span class="pwlist-rank">'+(i+1)+'</span>'
+        +'<span class="pwlist-user'+(i<3?' top3':'')+'" title="'+esc(c.user)+'">'+esc(c.user||'\u2014')+'</span>'
+        +'<span class="pwlist-pw'+(i<3?' top3':'')+'" title="'+esc(c.password)+'">'+esc(c.password)+'</span>'
+        +'<span class="pwlist-count">'+fmt(c.attempts)+'</span>'
+        +'</div>';
+    }).join('');
 }
 
 /* ── countries ── */
@@ -1162,7 +1166,7 @@ function applyData(d){
   renderIpTable(d.top_ips||[]);
   renderTopAttacker(d.top_ips||[]);
   renderUserList(d.top_users||[]);
-  renderPasswordList(d.top_passwords||[], d.pw_capture_active||false);
+  renderPasswordList(d.top_combos||[], d.pw_capture_active||false);
   renderCountries(d.top_countries||[]);
   renderAsns(d.top_asns||[]);
   renderSshAlerts(d.alerts||[]);

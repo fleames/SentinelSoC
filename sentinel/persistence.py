@@ -449,10 +449,10 @@ def _save_parsed_state():
                 str(ip): list(ports)
                 for ip, ports in state.ssh_ip_src_ports.items()
             },
-            "ssh_passwords": list(state.ssh_passwords.most_common(5000)),
-            "ssh_ip_passwords": {
-                str(ip): list(pwds.most_common(100))
-                for ip, pwds in state.ssh_ip_passwords.items()
+            "ssh_combos": list(state.ssh_combos.most_common(5000)),
+            "ssh_ip_combos": {
+                str(ip): list(combos.most_common(100))
+                for ip, combos in state.ssh_ip_combos.items()
             },
         }
     with state.botnet_lock:
@@ -669,16 +669,16 @@ def _load_parsed_state():
                 maxlen=200,
             )
 
-        state.ssh_passwords.clear()
-        state.ssh_passwords.update(
-            {str(k): int(v) for k, v in list(data.get("ssh_passwords", []))}
+        state.ssh_combos.clear()
+        state.ssh_combos.update(
+            {str(k): int(v) for k, v in list(data.get("ssh_combos", []))}
         )
-        state.ssh_ip_passwords.clear()
-        for ip, rows in dict(data.get("ssh_ip_passwords", {})).items():
+        state.ssh_ip_combos.clear()
+        for ip, rows in dict(data.get("ssh_ip_combos", {})).items():
             c = Counter()
-            for pw, cnt in list(rows):
-                c[str(pw)] += int(cnt)
-            state.ssh_ip_passwords[str(ip)] = c
+            for combo, cnt in list(rows):
+                c[str(combo)] += int(cnt)
+            state.ssh_ip_combos[str(ip)] = c
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

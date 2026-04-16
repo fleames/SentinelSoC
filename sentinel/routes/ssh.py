@@ -2,13 +2,15 @@
 """
 sentinel/routes/ssh.py -- SSH attack dashboard page and data endpoint.
 """
+import csv
+import io
 import json
 import os
 import time
 from collections import Counter
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, Response, jsonify, render_template, request
 
 from sentinel import config, state
 from sentinel.routes.history import _parse_epoch_param
@@ -135,6 +137,37 @@ def api_ssh_data():
         "pw_capture_active": pw_capture_active,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })
+
+
+@bp.route("/api/ssh/combos/export")
+def api_ssh_combos_export():
+    fmt = request.args.get("fmt", "csv").lower()
+    with state.lock:
+        rows = [
+            (k.split("||", 1)[0], k.split("||", 1)[1] if "||" in k else k, n)
+            for k, n in state.ssh_combos.most_common()
+        ]
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    if fmt == "json":
+        data = [{"user": u, "password": p, "attempts": n} for u, p, n in rows]
+        return Response(
+            json.dumps(data, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename=ssh_combos_{ts}.json"},
+        )
+
+    # Default: CSV
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["username", "password", "attempts"])
+    w.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=ssh_combos_{ts}.csv"},
+    )
 
 
 @bp.route("/api/ssh/ip")

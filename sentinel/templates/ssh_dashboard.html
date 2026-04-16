@@ -154,6 +154,8 @@
 .pwlist-pw{color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;letter-spacing:.02em;}
 .pwlist-pw.top3{color:#f87171;font-weight:600;}
 .pw-none{color:var(--muted);font-style:italic;}
+.export-btn{font-size:10px;padding:2px 7px;border:1px solid var(--border);border-radius:3px;color:var(--muted);text-decoration:none;background:var(--card);letter-spacing:.04em;}
+.export-btn:hover{color:#f1f5f9;border-color:#64748b;}
 .pwlist-count{color:var(--danger);font-weight:700;text-align:right;font-variant-numeric:tabular-nums;}
 
 /* Combo header row */
@@ -379,7 +381,12 @@
 
     <!-- Credential combos (PAM capture) -->
     <div class="card" id="pwCard">
-      <h2>Credential combos tried <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span></h2>
+      <h2>Credential combos tried <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span>
+        <span id="pwExportBtns" style="display:none;float:right;gap:6px;display:none">
+          <a id="pwExportCsv" href="/api/ssh/combos/export?fmt=csv" download class="export-btn">CSV</a>
+          <a id="pwExportJson" href="/api/ssh/combos/export?fmt=json" download class="export-btn">JSON</a>
+        </span>
+      </h2>
       <div style="max-height:340px;overflow-y:auto" id="pwList"></div>
     </div>
 
@@ -1003,6 +1010,8 @@ function renderPasswordList(combos, active){
   }
   var total=combos.reduce(function(a,c){return a+c.attempts;},0);
   if(hint) hint.textContent='live PAM capture \u2014 '+fmt(total)+' attempts, '+fmt(combos.length)+' unique combos';
+  var eb=document.getElementById('pwExportBtns');
+  if(eb) eb.style.display=combos.length?'inline-flex':'none';
   if(!combos||!combos.length){
     el.innerHTML='<div class="ssh-empty">No credential data yet</div>';
     return;

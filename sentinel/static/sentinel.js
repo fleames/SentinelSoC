@@ -1212,6 +1212,7 @@ async function load(force){
   try{
     applyRender(d);
     renderBanList(d);
+    renderWhitelist(d);
   }catch(e){
     renderErr=e;
     console.error('render failure',e);
@@ -1337,6 +1338,45 @@ document.getElementById('banList').addEventListener('click',async function(e){
     await load(true);
   }catch(err){ alert('Unmute failed'); }
 });
+/* Path whitelist */
+function renderWhitelist(d){
+  var el=document.getElementById('whitelistEntries');
+  if(!el) return;
+  var entries=d.whitelisted_paths||[];
+  if(!entries.length){
+    el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No whitelisted paths</span></div>';
+    return;
+  }
+  el.innerHTML=entries.map(function(p){
+    return '<div class="ban-row">'
+      +'<span class="kip" title="'+escapeAttr(p)+'">'+escapeHtml(p)+'</span>'
+      +'<button type="button" class="toolbtn danger" data-wl-remove="'+escapeAttr(p)+'">Remove</button>'
+      +'</div>';
+  }).join('');
+}
+document.getElementById('btnWhitelistAdd').addEventListener('click',async function(){
+  var p=document.getElementById('whitelistPath').value.trim();
+  if(!p) return;
+  try{
+    var r=await fetch('/api/whitelist/add',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Add failed'); return; }
+    document.getElementById('whitelistPath').value='';
+    await load(true);
+  }catch(e){ alert('Add failed'); }
+});
+document.getElementById('whitelistEntries').addEventListener('click',async function(e){
+  var b=e.target.closest('[data-wl-remove]');
+  if(!b||!b.dataset.wlRemove) return;
+  var p=b.dataset.wlRemove;
+  try{
+    var r=await fetch('/api/whitelist/remove',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Remove failed'); return; }
+    await load(true);
+  }catch(err){ alert('Remove failed'); }
+});
+
 document.getElementById('btnReset').addEventListener('click',async function(){
   if(!confirm('Reset all counters, charts, alerts, audit log, and historical telemetry?')) return;
   try{

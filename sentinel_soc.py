@@ -16,6 +16,7 @@ from sentinel.persistence import (
     _load_behavior_state,
     _load_history_buckets,
     _load_ssh_history_buckets,
+    _load_path_whitelist,
     _prune_history_event_files,
     _prune_ssh_history_event_files,
 )
@@ -30,6 +31,7 @@ _load_parsed_state()
 _load_behavior_state()
 _load_history_buckets()
 _load_ssh_history_buckets()
+_load_path_whitelist()
 _prune_history_event_files()
 _prune_ssh_history_event_files()
 

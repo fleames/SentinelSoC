@@ -17,6 +17,7 @@ from sentinel.helpers import (
     _fp_key,
     _ip_subnet,
     _is_static_asset,
+    _is_whitelisted_path,
     _normalize_caddy_headers,
     _normalize_client_ip,
     _normalize_uri_campaign,
@@ -134,6 +135,12 @@ def _process_log_event(data, source=""):
         s = 0
         matched_rules = []
 
+    # Analyst-managed path whitelist: zero score, skip path/history tracking.
+    _path_whitelisted = _is_whitelisted_path(path_bucket)
+    if _path_whitelisted:
+        s = 0
+        matched_rules = []
+
     is_ssh = (source == "ssh")
     ssh_auth_method = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""
     ssh_key_fp  = (_header_first(headers, "X-SSH-Key-Fp",  "x-ssh-key-fp")  or "") if is_ssh else ""
@@ -194,7 +201,7 @@ def _process_log_event(data, source=""):
             state.ips[ip] += 1
             state.domains[host] += 1
             state.referers[ref] += 1
-            if not _is_static_asset(path_bucket):
+            if not _is_static_asset(path_bucket) and not _path_whitelisted:
                 state.paths[uri] += 1
             state.status_codes[status] += 1
 
@@ -226,7 +233,7 @@ def _process_log_event(data, source=""):
                 state.ssh_countries[country_u] += 1
 
         state.ip_geo[ip] = resolved if resolved is not None else geo
-        if not _is_static_asset(path_bucket):
+        if not _is_static_asset(path_bucket) and not _path_whitelisted:
             state.ip_paths[ip][uri] += 1
         state.ip_hosts[ip].add(host)
         for tg in _ua_tags(ua):
@@ -367,9 +374,8 @@ def _process_log_event(data, source=""):
         with state.lock:
             state.ssh_history_events.appendleft(event_row)
         _append_ssh_history_event(event_row)
-    elif s > 0 or not _is_static_asset(path_bucket):
-        # Skip logging zero-score static assets to history — they are browser noise
-        # (JS chunks, CSS, fonts, icons) and clutter the historical events view.
+    elif not _path_whitelisted and (s > 0 or not _is_static_asset(path_bucket)):
+        # Skip logging zero-score static assets and whitelisted paths to history.
         _append_history_event(event_row)
 
     return "ok"

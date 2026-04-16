@@ -122,6 +122,18 @@ def _is_static_asset(path):
     ))
 
 
+def _is_whitelisted_path(path):
+    """Return True if path matches any entry in state.whitelisted_paths.
+    Each whitelist entry is treated as a prefix: "/locales/" matches "/locales/en/common.json".
+    An exact entry like "/api/health" is also supported."""
+    p = (path or "").lower().split("?")[0]
+    for entry in state.whitelisted_paths:
+        e = entry.lower()
+        if p == e or p.startswith(e):
+            return True
+    return False
+
+
 def _behavior_bonus(ip, ua_key, path):
     b = state.ip_behavior[ip]
     win_s = max(1.0, b["last_seen"] - b["first_seen"])

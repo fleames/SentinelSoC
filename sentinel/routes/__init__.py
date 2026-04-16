@@ -10,6 +10,7 @@ from sentinel.routes.history import bp as history_bp
 from sentinel.routes.ingest import bp as ingest_bp
 from sentinel.routes.ui import bp as ui_bp
 from sentinel.routes.ssh import bp as ssh_bp
+from sentinel.routes.whitelist import bp as whitelist_bp
 
 __all__ = [
     "main_bp",
@@ -20,4 +21,5 @@ __all__ = [
     "ingest_bp",
     "ui_bp",
     "ssh_bp",
+    "whitelist_bp",
 ]

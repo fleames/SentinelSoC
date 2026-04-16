@@ -69,6 +69,7 @@ def data():
         banned_sorted = sorted(state.banned_ips)
         muted_dict = {k: int(state.muted_hits[k]) for k in banned_sorted}
         ban_notes_snapshot = {k: state.ban_notes[k] for k in banned_sorted if k in state.ban_notes}
+        whitelisted_paths_snapshot = sorted(state.whitelisted_paths)
         ip_tags_payload = {k: sorted(v) for k, v in state.ip_tags.items() if v}
         ips_top = state.ips.most_common(15)
         domains_top = state.domains.most_common(10)
@@ -145,6 +146,7 @@ def data():
             "banned_ips": banned_sorted,
             "muted_hits": muted_dict,
             "ban_notes": ban_notes_snapshot,
+            "whitelisted_paths": whitelisted_paths_snapshot,
             "muted_total": muted_total,
             "bytes_served": bytes_served_now,
             "iptables_enabled": config.IPTABLES_ENABLED,

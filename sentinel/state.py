@@ -75,6 +75,9 @@ banned_ips = set()
 muted_hits = Counter()
 ban_notes = {}   # ip -> analyst note e.g. "http_abuse", "audit", "auto: <reason>"
 
+# Path whitelist: zero-score, skip path counters and history for matching paths.
+whitelisted_paths = set()   # set of path prefix strings e.g. "/locales/", "/api/health"
+
 # Botnet campaign tracking
 suspicious_hit_buffer = deque(maxlen=10000)
 botnet_campaigns = {}   # trigger_uri -> campaign dict

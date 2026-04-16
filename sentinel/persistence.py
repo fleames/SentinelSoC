@@ -772,6 +772,43 @@ def _load_behavior_state():
 
 
 # ========================
+# PATH WHITELIST
+# ========================
+def _load_path_whitelist():
+    if not config.PATH_WHITELIST_PATH:
+        return
+    try:
+        with open(config.PATH_WHITELIST_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+    with state.lock:
+        state.whitelisted_paths.clear()
+        for entry in data:
+            s = str(entry).strip()
+            if s:
+                state.whitelisted_paths.add(s)
+
+
+def _save_path_whitelist():
+    if not config.PATH_WHITELIST_PATH:
+        return
+    try:
+        with state.lock:
+            payload = sorted(state.whitelisted_paths)
+        d = os.path.dirname(config.PATH_WHITELIST_PATH) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = config.PATH_WHITELIST_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp, config.PATH_WHITELIST_PATH)
+    except OSError:
+        pass
+
+
+# ========================
 # HISTORY BUCKETS
 # ========================
 def _save_history_buckets():

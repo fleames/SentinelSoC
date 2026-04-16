@@ -218,6 +218,16 @@
         <div id="banList"></div>
       </div>
     </div>
+    <div class="card" id="pathWhitelistCard">
+      <h2>Path whitelist <span class="hint">zero-score, excluded from counters &amp; history</span></h2>
+      <div class="body" style="max-height:none">
+        <div class="ban-actions">
+          <input type="text" id="whitelistPath" class="ban-inp" placeholder="/path or /prefix/" autocomplete="off"/>
+          <button type="button" class="toolbtn" id="btnWhitelistAdd">Add</button>
+        </div>
+        <div id="whitelistEntries"></div>
+      </div>
+    </div>
     <div class="card" id="sourcesCard">
       <h2>Log sources <span class="hint">file tails + remote ingest</span></h2>
       <div class="body" style="max-height:none;padding:0" id="sourcesList"></div>

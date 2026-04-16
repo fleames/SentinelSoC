@@ -6,7 +6,7 @@ import re
 from urllib.parse import unquote_plus
 
 from sentinel import config
-from sentinel.helpers import _is_static_asset
+from sentinel.helpers import _is_static_asset, _is_whitelisted_path
 
 # ---------------------------------------------------------------------------
 # Pre-compiled patterns for SQLi and XSS detection
@@ -83,6 +83,13 @@ DETECTION_RULES = [
             _is_static_asset((e.get("uri") or "").split("?")[0])
             or _is_static_asset(e.get("path") or "")
         ),
+        "score": 0,
+    },
+    # -- Analyst-whitelisted paths (short-circuit) --
+    {
+        "name": "whitelisted_path",
+        "skip": True,
+        "match": lambda e: _is_whitelisted_path(e.get("path") or ""),
         "score": 0,
     },
     # -- High-value paths --

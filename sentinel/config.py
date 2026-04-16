@@ -71,6 +71,10 @@ AUDIT_LOG_PATH = (
 BEHAVIOR_STATE_PATH = _state_file("behavior-state.json")
 PARSED_STATE_PATH = _state_file("parsed-state.json")
 PATH_WHITELIST_PATH = _state_file("path-whitelist.json")
+HISTORY_BUCKETS_PATH = _state_file("history-buckets.json")
+HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "history-events") if STATE_DIR else ""
+SSH_HISTORY_BUCKETS_PATH = _state_file("ssh-history-buckets.json")
+SSH_HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "ssh-history-events") if STATE_DIR else ""
 
 # ========================
 # NETWORK / SECURITY
@@ -170,3 +174,72 @@ ALERT_QUEUE_MAX = _int(os.environ.get("SENTINEL_ALERT_QUEUE", 200), 200)
 
 PLACEHOLDER_CC = "..."
 PLACEHOLDER_ASN = "Resolving..."
+
+# Fallback audit log path used when the configured path is read-only.
+_DEFAULT_AUDIT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sentinel-audit.jsonl")
+
+# ========================
+# HISTORY
+# ========================
+HISTORY_BUCKET_S = _int(os.environ.get("SENTINEL_HISTORY_BUCKET_S", 60), 60)
+HISTORY_RETENTION_DAYS = _int(os.environ.get("SENTINEL_HISTORY_RETENTION_DAYS", 30), 30)
+HISTORY_RETENTION_S = HISTORY_RETENTION_DAYS * 86400
+HISTORY_EVENT_PAGE_MAX = _int(os.environ.get("SENTINEL_HISTORY_PAGE_MAX", 200), 200)
+HISTORY_EVENT_MAX_SCAN = _int(os.environ.get("SENTINEL_HISTORY_MAX_SCAN", 100000), 100000)
+
+# ========================
+# BEHAVIOR DETECTION (extended)
+# ========================
+PERSISTENT_THREAT_DAYS = _int(os.environ.get("SENTINEL_PERSISTENT_DAYS", 3), 3)
+AUTH_FAIL_BAN_THRESHOLD = _int(os.environ.get("SENTINEL_AUTH_FAIL_BAN", 10), 10)
+
+TLS_FP_SHARED_THRESHOLD = _int(os.environ.get("SENTINEL_TLS_FP_THRESHOLD", 5), 5)
+UA_BURST_THRESHOLD = _int(os.environ.get("SENTINEL_UA_BURST_THRESHOLD", 20), 20)
+UA_BURST_WINDOW_S = _int(os.environ.get("SENTINEL_UA_BURST_WINDOW_S", 60), 60)
+
+ERROR_PROBE_MIN_REQS = _int(os.environ.get("SENTINEL_ERROR_PROBE_MIN_REQS", 15), 15)
+ERROR_PROBE_4XX_RATE = _float(os.environ.get("SENTINEL_ERROR_PROBE_4XX_RATE", 0.6), 0.6)
+
+SHARED_UA_MIN_IPS = _int(os.environ.get("SENTINEL_SHARED_UA_MIN_IPS", 8), 8)
+
+UA_ROTATION_MIN_SWITCHES = _int(os.environ.get("SENTINEL_UA_ROTATION_MIN_SWITCHES", 6), 6)
+UA_ROTATION_MAX_REQS = _int(os.environ.get("SENTINEL_UA_ROTATION_MAX_REQS", 80), 80)
+UA_ROTATION_WINDOW_S = _int(os.environ.get("SENTINEL_UA_ROTATION_WINDOW_S", 300), 300)
+
+SERVER_ERROR_MIN_REQS = _int(os.environ.get("SENTINEL_SERVER_ERROR_MIN_REQS", 10), 10)
+SERVER_ERROR_5XX_RATE = _float(os.environ.get("SENTINEL_SERVER_ERROR_5XX_RATE", 0.3), 0.3)
+
+HEADLESS_MIN_REQS = _int(os.environ.get("SENTINEL_HEADLESS_MIN_REQS", 30), 30)
+HEADLESS_NO_REF_RATE = _float(os.environ.get("SENTINEL_HEADLESS_NO_REF_RATE", 0.7), 0.7)
+
+MULTI_HOST_THRESHOLD = _int(os.environ.get("SENTINEL_MULTI_HOST_THRESHOLD", 4), 4)
+EMPTY_UA_MIN_REQS = _int(os.environ.get("SENTINEL_EMPTY_UA_MIN_REQS", 10), 10)
+
+SLOW_LOW_MIN_HOURS = _float(os.environ.get("SENTINEL_SLOW_LOW_MIN_HOURS", 2.0), 2.0)
+SLOW_LOW_MIN_PATHS = _int(os.environ.get("SENTINEL_SLOW_LOW_MIN_PATHS", 15), 15)
+
+# ========================
+# SSH DETECTION
+# ========================
+SSH_KEX_SHARED_THRESHOLD = _int(os.environ.get("SENTINEL_SSH_KEX_SHARED_THRESHOLD", 3), 3)
+SSH_PORT_ENTROPY_LOW = _float(os.environ.get("SENTINEL_SSH_PORT_ENTROPY_LOW", 1.5), 1.5)
+
+# ========================
+# BOTNET (extended)
+# ========================
+BOTNET_CHECK_INTERVAL = _int(os.environ.get("SENTINEL_BOTNET_CHECK_INTERVAL", 10), 10)
+BOTNET_EXPIRY_S = _int(os.environ.get("SENTINEL_BOTNET_EXPIRY_S", 1800), 1800)
+
+# ========================
+# WORKERS
+# ========================
+GEO_WORKERS = _int(os.environ.get("SENTINEL_GEO_WORKERS", 2), 2)
+REPUTATION_WORKERS = _int(os.environ.get("SENTINEL_REPUTATION_WORKERS", 1), 1)
+
+
+def _effective_log_path():
+    return LOG_PATHS[0] if LOG_PATHS else ""
+
+
+def _effective_log_from_start():
+    return _bool(os.environ.get("LOG_FROM_START"), False)

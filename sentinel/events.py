@@ -194,7 +194,8 @@ def _process_log_event(data, source=""):
             state.ips[ip] += 1
             state.domains[host] += 1
             state.referers[ref] += 1
-            state.paths[uri] += 1
+            if not _is_static_asset(path_bucket):
+                state.paths[uri] += 1
             state.status_codes[status] += 1
 
             if 400 <= status < 500:
@@ -225,7 +226,8 @@ def _process_log_event(data, source=""):
                 state.ssh_countries[country_u] += 1
 
         state.ip_geo[ip] = resolved if resolved is not None else geo
-        state.ip_paths[ip][uri] += 1
+        if not _is_static_asset(path_bucket):
+            state.ip_paths[ip][uri] += 1
         state.ip_hosts[ip].add(host)
         for tg in _ua_tags(ua):
             state.ip_tags[ip].add(tg)

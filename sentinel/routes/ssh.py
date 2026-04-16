@@ -81,7 +81,7 @@ def api_ssh_data():
 
         # Top credential combos (PAM capture): "user||password" -> split for API
         top_combos = []
-        for combo_key, n in state.ssh_combos.most_common(50):
+        for combo_key, n in state.ssh_combos.most_common():
             parts = combo_key.split("||", 1)
             top_combos.append({
                 "user": parts[0] if len(parts) == 2 else "",

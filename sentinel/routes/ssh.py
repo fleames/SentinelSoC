@@ -79,6 +79,13 @@ def api_ssh_data():
         # Auth method totals
         auth_totals = dict(state.ssh_auth_method_totals)
 
+        # Top tried passwords (PAM capture)
+        top_passwords = [
+            {"password": p, "attempts": n}
+            for p, n in state.ssh_passwords.most_common(50)
+        ]
+        pw_capture_active = bool(state.ssh_passwords)
+
         # Top SSH public key fingerprints (LogLevel VERBOSE)
         top_key_fps = []
         for fp, attempts in state.ssh_key_fps.most_common(20):
@@ -120,6 +127,8 @@ def api_ssh_data():
         "auth_totals": auth_totals,
         "campaigns": campaigns,
         "top_key_fps": top_key_fps,
+        "top_passwords": top_passwords,
+        "pw_capture_active": pw_capture_active,
         "server_time": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -148,6 +157,7 @@ def api_ssh_ip():
         port_entropy = state.ssh_ip_port_entropy.get(ip)
         note = state.ip_notes.get(ip, "")
         category = state.ip_categories.get(ip, "")
+        ip_passwords = list(state.ssh_ip_passwords.get(ip, Counter()).most_common(30))
 
     users_sorted = sorted(user_counts.items(), key=lambda x: -x[1])
     return jsonify({
@@ -177,6 +187,7 @@ def api_ssh_ip():
         "days_seen": days_seen,
         "note": note,
         "category": category,
+        "top_passwords": [{"password": p, "attempts": n} for p, n in ip_passwords],
     })
 
 

@@ -449,6 +449,11 @@ def _save_parsed_state():
                 str(ip): list(ports)
                 for ip, ports in state.ssh_ip_src_ports.items()
             },
+            "ssh_passwords": list(state.ssh_passwords.most_common(5000)),
+            "ssh_ip_passwords": {
+                str(ip): list(pwds.most_common(100))
+                for ip, pwds in state.ssh_ip_passwords.items()
+            },
         }
     with state.botnet_lock:
         payload["botnet_campaigns"] = {
@@ -663,6 +668,17 @@ def _load_parsed_state():
                 (int(p) for p in list(ports) if isinstance(p, (int, float))),
                 maxlen=200,
             )
+
+        state.ssh_passwords.clear()
+        state.ssh_passwords.update(
+            {str(k): int(v) for k, v in list(data.get("ssh_passwords", []))}
+        )
+        state.ssh_ip_passwords.clear()
+        for ip, rows in dict(data.get("ssh_ip_passwords", {})).items():
+            c = Counter()
+            for pw, cnt in list(rows):
+                c[str(pw)] += int(cnt)
+            state.ssh_ip_passwords[str(ip)] = c
 
     with state.botnet_lock:
         state.botnet_campaigns.clear()

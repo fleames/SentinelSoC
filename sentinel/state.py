@@ -135,6 +135,8 @@ ssh_kex_fp_ips = defaultdict(set)           # kex_fp -> set of IPs sharing that 
 ssh_ip_src_ports = defaultdict(lambda: deque(maxlen=200))  # ip -> recent source ports (capped)
 ssh_ip_port_entropy = {}                    # ip -> Shannon entropy in bits (updated per 10 new ports)
 ssh_history_buckets = {}                    # minute-floor ts -> {"ts": int, "total": int}
+ssh_passwords = Counter()                   # password -> total attempts across all IPs
+ssh_ip_passwords = defaultdict(Counter)     # ip -> password -> attempt count
 ip_notes = {}                               # ip -> freeform analyst note (persisted, not cleared on reset)
 ip_categories = {}                          # ip -> category string e.g. "botnet", "scanner", "apt", custom
 behavior_signal_counts = Counter()

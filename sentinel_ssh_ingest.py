@@ -28,9 +28,11 @@ Environment variables:
 import hashlib
 import json
 import os
+import queue as _queue
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -42,6 +44,9 @@ LOG_PATH        = os.environ.get("SSH_LOG_PATH",         "/var/log/auth.log")
 BATCH_SIZE      = int(os.environ.get("SSH_BATCH_SIZE",   "20"))
 FLUSH_INTERVAL  = float(os.environ.get("SSH_FLUSH_INTERVAL", "5"))
 SSH_SOURCE      = os.environ.get("SSH_SOURCE", "").strip().lower()  # "journal" | "file" | ""
+# Path to PAM password log (optional). Set SSH_PAM_LOG=/var/log/sentinel-ssh-passwords.log
+# See scripts/sentinel-ssh-pw-log.sh for PAM setup instructions.
+PAM_LOG_PATH    = os.environ.get("SSH_PAM_LOG", "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +200,26 @@ def _parse_line(line):
 
 
 # ---------------------------------------------------------------------------
+# PAM password log parser
+# Format written by scripts/sentinel-ssh-pw-log.sh: epoch|ip|user|password
+# ---------------------------------------------------------------------------
+_PAM_LINE_RE = re.compile(r'^(\d+)\|([^|]*)\|([^|]*)\|(.+)$')
+
+
+def _parse_pam_line(line):
+    """Return (ip, user, password) from a PAM log line, or None."""
+    m = _PAM_LINE_RE.match(line.strip())
+    if not m:
+        return None
+    ip = m.group(2).strip()
+    user = m.group(3).strip()
+    password = m.group(4)   # preserve exact password including spaces
+    if not ip or not password:
+        return None
+    return ip, user, password
+
+
+# ---------------------------------------------------------------------------
 # Event builder
 # ---------------------------------------------------------------------------
 
@@ -221,6 +246,50 @@ def _make_event(ip, user=None, auth_method="", src_port=None, key_fp=None, kex_f
         "size":      0,
         "headers":   hdrs,
     }
+
+
+def _make_password_event(ip, user, password):
+    """Create a password-only synthetic event. Sentinel only updates password
+    counters for these (X-SSH-PW-Event marker); all other SSH counters are
+    driven by the regular auth.log/journal events to avoid double-counting."""
+    hdrs = {
+        "User-Agent":      [f"SSH-client/{user}" if user else "SSH-client"],
+        "X-SSH-Password":  [password[:200]],
+        "X-SSH-PW-Event":  ["1"],
+    }
+    return {
+        "msg":       "handled request",
+        "ts":        datetime.now(timezone.utc).isoformat(),
+        "remote_ip": ip,
+        "client_ip": ip,
+        "host":      "ssh",
+        "uri":       "/ssh",
+        "method":    "SSH",
+        "status":    401,
+        "size":      0,
+        "headers":   hdrs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PAM background reader thread
+# ---------------------------------------------------------------------------
+
+# Shared queue filled by the PAM reader thread, drained by the main loop.
+_pam_event_queue = _queue.Queue(maxsize=100_000)
+
+
+def _pam_reader_thread(path):
+    """Tail the PAM password log and enqueue password events."""
+    print(f"[ssh-ingest] PAM password capture active, tailing {path}", flush=True)
+    for line in _lines_from_file(path):
+        parsed = _parse_pam_line(line)
+        if parsed:
+            ip, user, password = parsed
+            try:
+                _pam_event_queue.put_nowait(_make_password_event(ip, user, password))
+            except _queue.Full:
+                pass  # drop if queue is full (shouldn't happen in normal operation)
 
 
 # ---------------------------------------------------------------------------
@@ -376,11 +445,20 @@ def _line_source(mode):
 
 def main():
     mode = _choose_source()
+    pam_active = bool(PAM_LOG_PATH)
     print(
         f"[ssh-ingest] starting  mode={mode}  sentinel={SENTINEL_URL}"
-        f"  batch={BATCH_SIZE}  flush_interval={FLUSH_INTERVAL}s",
+        f"  batch={BATCH_SIZE}  flush_interval={FLUSH_INTERVAL}s"
+        f"  pam_passwords={'yes ('+PAM_LOG_PATH+')' if pam_active else 'no (set SSH_PAM_LOG to enable)'}",
         flush=True,
     )
+
+    if pam_active:
+        t = threading.Thread(
+            target=_pam_reader_thread, args=(PAM_LOG_PATH,), daemon=True, name="pam-reader"
+        )
+        t.start()
+
     batch = []
     last_flush = time.time()
 
@@ -393,6 +471,18 @@ def main():
                 _post_batch(batch)
                 batch = []
                 last_flush = time.time()
+
+        # Drain PAM password events queued by the background thread
+        if pam_active:
+            while True:
+                try:
+                    batch.append(_pam_event_queue.get_nowait())
+                    if len(batch) >= BATCH_SIZE:
+                        _post_batch(batch)
+                        batch = []
+                        last_flush = time.time()
+                except _queue.Empty:
+                    break
 
         now = time.time()
         if batch and (now - last_flush) >= FLUSH_INTERVAL:

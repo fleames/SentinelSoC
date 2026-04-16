@@ -142,12 +142,23 @@ def _process_log_event(data, source=""):
         matched_rules = []
 
     is_ssh = (source == "ssh")
-    ssh_auth_method = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""
-    ssh_key_fp  = (_header_first(headers, "X-SSH-Key-Fp",  "x-ssh-key-fp")  or "") if is_ssh else ""
-    ssh_kex_fp  = (_header_first(headers, "X-SSH-Kex-Fp",  "x-ssh-kex-fp")  or "") if is_ssh else ""
+    ssh_auth_method  = (_header_first(headers, "X-SSH-Auth-Method", "x-ssh-auth-method") or "") if is_ssh else ""
+    ssh_key_fp       = (_header_first(headers, "X-SSH-Key-Fp",  "x-ssh-key-fp")  or "") if is_ssh else ""
+    ssh_kex_fp       = (_header_first(headers, "X-SSH-Kex-Fp",  "x-ssh-kex-fp")  or "") if is_ssh else ""
     ssh_src_port_raw = (_header_first(headers, "X-SSH-Src-Port", "x-ssh-src-port") or "") if is_ssh else ""
+    ssh_pw_event     = (_header_first(headers, "X-SSH-PW-Event", "x-ssh-pw-event") or "") if is_ssh else ""
+    ssh_password     = (_header_first(headers, "X-SSH-Password", "x-ssh-password") or "") if is_ssh else ""
 
     with state.lock:
+        # Password-only event from the PAM log: just update password counters.
+        # All other SSH counters (ssh_total, ssh_ips, usernames, etc.) are driven
+        # by the regular auth.log/journal events to avoid double-counting.
+        if is_ssh and ssh_pw_event:
+            if ip and ssh_password:
+                state.ssh_passwords[ssh_password] += 1
+                state.ssh_ip_passwords[ip][ssh_password] += 1
+            return "ok"
+
         if is_ssh:
             state.ssh_total += 1
             state.ssh_ips[ip] += 1

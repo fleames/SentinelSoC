@@ -144,6 +144,25 @@
 /* No-data state */
 .ssh-empty{color:var(--muted);font-family:var(--mono);font-size:11px;padding:20px 14px;text-align:center;}
 
+/* Password list rows (mirrors .ulist-row but danger-coloured bar) */
+.pwlist-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.025);font-family:var(--mono);font-size:11px;}
+.pwlist-row:last-child{border-bottom:none;}
+.pwlist-row:hover{background:rgba(255,255,255,.025);}
+.pwlist-rank{color:var(--muted);font-size:10px;min-width:20px;text-align:right;flex-shrink:0;}
+.pwlist-name{flex:1;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;letter-spacing:.02em;}
+.pwlist-name.top3{color:#f87171;font-weight:600;}
+.pwlist-bar-track{width:80px;flex-shrink:0;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;}
+.pwlist-bar{height:100%;background:linear-gradient(90deg,var(--danger),#ff6b6b);border-radius:3px;}
+.pwlist-count{color:var(--danger);font-weight:700;min-width:40px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums;}
+
+/* Passwords section inside the IP drill-down modal */
+.drill-pw-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-family:var(--mono);font-size:11px;}
+.drill-pw-name{flex:1;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.drill-pw-name.top1{color:#f87171;font-weight:600;}
+.drill-pw-bar-track{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;max-width:80px;}
+.drill-pw-bar{height:100%;background:linear-gradient(90deg,var(--danger),#f87171);border-radius:3px;}
+.drill-pw-count{color:var(--danger);font-weight:700;min-width:36px;text-align:right;flex-shrink:0;}
+
 /* Category badges */
 .cat-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:1px 6px;border-radius:3px;font-family:var(--mono);white-space:nowrap;vertical-align:middle;}
 .cat-badge.botnet{background:rgba(220,38,38,.2);color:#f87171;border:1px solid rgba(220,38,38,.35);}
@@ -350,8 +369,14 @@
 
     <!-- Most tried usernames -->
     <div class="card">
-      <h2>Most tried usernames <span class="hint">credential wordlist intelligence &mdash; passwords not logged by sshd</span></h2>
+      <h2>Most tried usernames <span class="hint">credential wordlist intelligence</span></h2>
       <div style="max-height:340px;overflow-y:auto" id="userList"></div>
+    </div>
+
+    <!-- Most tried passwords (PAM capture) -->
+    <div class="card" id="pwCard">
+      <h2>Most tried passwords <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span></h2>
+      <div style="max-height:340px;overflow-y:auto" id="pwList"></div>
     </div>
 
     <!-- Historical telemetry -->
@@ -759,6 +784,21 @@ function renderSshDrill(d, body){
     }).join('');
   }
 
+  var pwds=d.top_passwords||[];
+  var pwHtml='';
+  if(pwds.length){
+    var maxPw=pwds[0].attempts||1;
+    pwHtml='<div class="drill-section-title">Passwords tried ('+pwds.length+')</div>'
+      +pwds.map(function(p,i){
+        var pct=Math.max(2,Math.round((p.attempts/maxPw)*100));
+        return '<div class="drill-pw-row">'
+          +'<span class="drill-pw-name'+(i===0?' top1':'')+'" title="'+esc(p.password)+'">'+esc(p.password)+'</span>'
+          +'<div class="drill-pw-bar-track"><div class="drill-pw-bar" style="width:'+pct+'%"></div></div>'
+          +'<span class="drill-pw-count">'+fmt(p.attempts)+'</span>'
+          +'</div>';
+      }).join('');
+  }
+
   body.innerHTML=
     '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">'
       +(f?'<span style="font-size:36px">'+f+'</span>':'')
@@ -787,7 +827,8 @@ function renderSshDrill(d, body){
       +'<div>Last seen: <span>'+tsLabel(b.last_seen)+'</span></div>'
     +'</div>'
     +daysHtml
-    +usersHtml;
+    +usersHtml
+    +pwHtml;
 }
 
 /* ── Category / note save helpers ── */
@@ -933,6 +974,41 @@ function renderUserList(users){
       +'<span class="ulist-name'+(i<3?' top3':'')+'" title="'+esc(u.user)+'">'+esc(u.user)+'</span>'
       +'<div class="ulist-bar-track"><div class="ulist-bar" style="width:'+pct+'%"></div></div>'
       +'<span class="ulist-count">'+fmt(u.attempts)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+/* ── password list ── */
+function renderPasswordList(passwords, active){
+  var el=document.getElementById('pwList');
+  var hint=document.getElementById('pwHint');
+  if(!el) return;
+  if(!active){
+    if(hint) hint.textContent='PAM capture not active \u2014 see scripts/sentinel-ssh-pw-log.sh';
+    el.innerHTML='<div class="ssh-empty" style="text-align:left;padding:12px 14px">'
+      +'<strong style="color:var(--text)">Setup required</strong><br>'
+      +'<span style="line-height:1.7">1. Copy <code>scripts/sentinel-ssh-pw-log.sh</code> to <code>/usr/local/bin/</code><br>'
+      +'2. <code>chmod 700</code> + <code>chown root:root</code> it<br>'
+      +'3. Add to <code>/etc/pam.d/sshd</code> (before @include common-auth):<br>'
+      +'<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.05);padding:3px 8px;border-radius:4px">'
+      +'auth optional pam_exec.so expose_authtok quiet /usr/local/bin/sentinel-ssh-pw-log.sh</code><br>'
+      +'4. Set <code>SSH_PAM_LOG=/var/log/sentinel-ssh-passwords.log</code> in the ingest service env</span>'
+      +'</div>';
+    return;
+  }
+  if(hint) hint.textContent='live PAM capture \u2014 '+fmt(passwords.length? passwords.reduce(function(a,p){return a+p.attempts;},0) :0)+' total attempts';
+  if(!passwords||!passwords.length){
+    el.innerHTML='<div class="ssh-empty">No password data yet</div>';
+    return;
+  }
+  var max=passwords[0].attempts||1;
+  el.innerHTML=passwords.map(function(p,i){
+    var pct=Math.max(2,Math.round((p.attempts/max)*100));
+    return '<div class="pwlist-row">'
+      +'<span class="pwlist-rank">'+(i+1)+'</span>'
+      +'<span class="pwlist-name'+(i<3?' top3':'')+'" title="'+esc(p.password)+'">'+esc(p.password)+'</span>'
+      +'<div class="pwlist-bar-track"><div class="pwlist-bar" style="width:'+pct+'%"></div></div>'
+      +'<span class="pwlist-count">'+fmt(p.attempts)+'</span>'
       +'</div>';
   }).join('');
 }
@@ -1086,6 +1162,7 @@ function applyData(d){
   renderIpTable(d.top_ips||[]);
   renderTopAttacker(d.top_ips||[]);
   renderUserList(d.top_users||[]);
+  renderPasswordList(d.top_passwords||[], d.pw_capture_active||false);
   renderCountries(d.top_countries||[]);
   renderAsns(d.top_asns||[]);
   renderSshAlerts(d.alerts||[]);

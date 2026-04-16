@@ -13,6 +13,9 @@ import ipaddress
 from collections import Counter
 from datetime import datetime, timezone
 
+# Directories that have been confirmed to exist — avoids makedirs on every event.
+_mkdir_done = set()
+
 from sentinel import config, state
 from sentinel.helpers import (
     _normalize_client_ip,
@@ -202,7 +205,10 @@ def _append_history_event(event_row):
     if not path:
         return
     try:
-        os.makedirs(config.HISTORY_EVENTS_DIR, exist_ok=True)
+        d = config.HISTORY_EVENTS_DIR
+        if d not in _mkdir_done:
+            os.makedirs(d, exist_ok=True)
+            _mkdir_done.add(d)
         payload = json.dumps(event_row, separators=(",", ":"), ensure_ascii=True) + "\n"
         with state.history_lock:
             with open(path, "a", encoding="utf-8") as f:
@@ -260,7 +266,10 @@ def _append_ssh_history_event(event_row):
     if not path:
         return
     try:
-        os.makedirs(config.SSH_HISTORY_EVENTS_DIR, exist_ok=True)
+        d = config.SSH_HISTORY_EVENTS_DIR
+        if d not in _mkdir_done:
+            os.makedirs(d, exist_ok=True)
+            _mkdir_done.add(d)
         payload = json.dumps(event_row, separators=(",", ":"), ensure_ascii=True) + "\n"
         with state.ssh_history_lock:
             with open(path, "a", encoding="utf-8") as f:

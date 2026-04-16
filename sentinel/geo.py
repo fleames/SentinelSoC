@@ -11,11 +11,13 @@ from sentinel import config, state
 
 def geo_worker():
     while True:
+        ip = None
         with state.geo_lock:
-            if not state.geo_queue:
-                time.sleep(0.05)
-                continue
-            ip = state.geo_queue.popleft()
+            if state.geo_queue:
+                ip = state.geo_queue.popleft()
+        if ip is None:
+            time.sleep(0.05)
+            continue
         _fetch_geo(ip)
 
 

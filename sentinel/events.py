@@ -154,7 +154,7 @@ def _process_log_event(data, source=""):
         # All other SSH counters (ssh_total, ssh_ips, usernames, etc.) are driven
         # by the regular auth.log/journal events to avoid double-counting.
         if is_ssh and ssh_pw_event:
-            if ip and ssh_password:
+            if ip:
                 ssh_user_pw = ua[len("SSH-client/"):].strip() if ua.startswith("SSH-client/") else ""
                 combo_key = f"{ssh_user_pw}||{ssh_password}"
                 state.ssh_combos[combo_key] += 1

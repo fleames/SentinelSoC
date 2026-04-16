@@ -797,7 +797,7 @@ function renderSshDrill(d, body){
       +combos.map(function(c,i){
         return '<div class="drill-pw-row">'
           +'<span class="drill-pw-user'+(i===0?' top1':'')+'" title="'+esc(c.user)+'">'+esc(c.user||'\u2014')+'</span>'
-          +'<span class="drill-pw-pw'+(i===0?' top1':'')+'" title="'+esc(c.password)+'">'+esc(c.password)+'</span>'
+          +'<span class="drill-pw-pw'+(i===0?' top1':'')+'" title="'+esc(c.password||'(none)')+'">'+esc(c.password||'\u2014')+'</span>'
           +'<span class="drill-pw-count">'+fmt(c.attempts)+'</span>'
           +'</div>';
       }).join('');
@@ -1011,7 +1011,7 @@ function renderPasswordList(combos, active){
       return '<div class="pwlist-row">'
         +'<span class="pwlist-rank">'+(i+1)+'</span>'
         +'<span class="pwlist-user'+(i<3?' top3':'')+'" title="'+esc(c.user)+'">'+esc(c.user||'\u2014')+'</span>'
-        +'<span class="pwlist-pw'+(i<3?' top3':'')+'" title="'+esc(c.password)+'">'+esc(c.password)+'</span>'
+        +'<span class="pwlist-pw'+(i<3?' top3':'')+'" title="'+esc(c.password||'(none)')+'">'+esc(c.password||'\u2014')+'</span>'
         +'<span class="pwlist-count">'+fmt(c.attempts)+'</span>'
         +'</div>';
     }).join('');

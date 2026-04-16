@@ -203,7 +203,7 @@ def _parse_line(line):
 # PAM password log parser
 # Format written by scripts/sentinel-ssh-pw-log.sh: epoch|ip|user|password
 # ---------------------------------------------------------------------------
-_PAM_LINE_RE = re.compile(r'^(\d+)\|([^|]*)\|([^|]*)\|(.+)$')
+_PAM_LINE_RE = re.compile(r'^(\d+)\|([^|]*)\|([^|]*)\|(.*)$')
 
 
 def _parse_pam_line(line):
@@ -214,7 +214,7 @@ def _parse_pam_line(line):
     ip = m.group(2).strip()
     user = m.group(3).strip()
     password = m.group(4)   # preserve exact password including spaces
-    if not ip or not password:
+    if not ip:
         return None
     return ip, user, password
 

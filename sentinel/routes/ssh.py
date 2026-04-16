@@ -2,8 +2,6 @@
 """
 sentinel/routes/ssh.py -- SSH attack dashboard page and data endpoint.
 """
-import csv
-import io
 import json
 import os
 import time
@@ -158,15 +156,12 @@ def api_ssh_combos_export():
             headers={"Content-Disposition": f"attachment; filename=ssh_combos_{ts}.json"},
         )
 
-    # Default: CSV
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["username", "password", "attempts"])
-    w.writerows(rows)
+    # Default: plain text, one user:password per line (most useful for wordlist tools)
+    lines = "\n".join(f"{u}:{p}" for u, p, _ in rows)
     return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=ssh_combos_{ts}.csv"},
+        lines,
+        mimetype="text/plain",
+        headers={"Content-Disposition": f"attachment; filename=ssh_combos_{ts}.txt"},
     )
 
 

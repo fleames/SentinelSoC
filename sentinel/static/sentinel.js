@@ -1213,6 +1213,7 @@ async function load(force){
     applyRender(d);
     renderBanList(d);
     renderWhitelist(d);
+    renderIpWhitelist(d.whitelisted_ips||[]);
   }catch(e){
     renderErr=e;
     console.error('render failure',e);
@@ -1377,6 +1378,40 @@ document.getElementById('whitelistEntries').addEventListener('click',async funct
   }catch(err){ alert('Remove failed'); }
 });
 
+document.getElementById('btnIpWhitelistAdd').addEventListener('click',async function(){
+  var ip=document.getElementById('whitelistIp').value.trim();
+  if(!ip) return;
+  try{
+    var r=await fetch('/api/ip-whitelist/add',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Add failed'); return; }
+    document.getElementById('whitelistIp').value='';
+    renderIpWhitelist(j.whitelisted_ips||[]);
+  }catch(e){ alert('Add failed'); }
+});
+document.getElementById('ipWhitelistEntries').addEventListener('click',async function(e){
+  var b=e.target.closest('[data-ipwl-remove]');
+  if(!b||!b.dataset.ipwlRemove) return;
+  var ip=b.dataset.ipwlRemove;
+  try{
+    var r=await fetch('/api/ip-whitelist/remove',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Remove failed'); return; }
+    renderIpWhitelist(j.whitelisted_ips||[]);
+  }catch(err){ alert('Remove failed'); }
+});
+function renderIpWhitelist(ips){
+  var el=document.getElementById('ipWhitelistEntries');
+  if(!el) return;
+  if(!ips||!ips.length){ el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No whitelisted IPs</span></div>'; return; }
+  el.innerHTML=ips.map(function(ip){
+    return '<div class="ban-row">'
+      +'<span class="kip" title="'+escapeAttr(ip)+'">'+escapeHtml(ip)+'</span>'
+      +'<button type="button" class="toolbtn danger" data-ipwl-remove="'+escapeAttr(ip)+'">Remove</button>'
+      +'</div>';
+  }).join('');
+}
+
 document.getElementById('btnReset').addEventListener('click',async function(){
   if(!confirm('Reset all counters, charts, alerts, audit log, and historical telemetry?')) return;
   try{
@@ -1448,6 +1483,18 @@ document.getElementById('modalBan').addEventListener('click',async function(){
     closeModal();
     await load(true);
   }catch(e){ alert('Mute failed'); }
+});
+
+document.getElementById('modalIpWhitelist').addEventListener('click',async function(){
+  if(!modalIp) return;
+  if(!confirm('Whitelist '+modalIp+'?\nAll traffic from this IP will be silently ignored — it will never appear in the panel.')) return;
+  try{
+    var r=await fetch('/api/ip-whitelist/add',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Whitelist failed'); return; }
+    closeModal();
+    await load(true);
+  }catch(e){ alert('Whitelist failed'); }
 });
 
 document.body.addEventListener('click',function(e){

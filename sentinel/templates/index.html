@@ -218,6 +218,16 @@
         <div id="banList"></div>
       </div>
     </div>
+    <div class="card" id="ipWhitelistCard">
+      <h2>IP whitelist <span class="hint">completely invisible — traffic silently dropped before any state update</span></h2>
+      <div class="body" style="max-height:none">
+        <div class="ban-actions">
+          <input type="text" id="whitelistIp" class="ban-inp" placeholder="IPv4 / IPv6" autocomplete="off"/>
+          <button type="button" class="toolbtn" id="btnIpWhitelistAdd">Add</button>
+        </div>
+        <div id="ipWhitelistEntries"></div>
+      </div>
+    </div>
     <div class="card" id="pathWhitelistCard">
       <h2>Path whitelist <span class="hint">zero-score, excluded from counters &amp; history</span></h2>
       <div class="body" style="max-height:none">
@@ -271,6 +281,7 @@
             <option value="brute_force">Brute force</option>
           </select>
           <button type="button" class="toolbtn danger" id="modalBan">Mute</button>
+          <button type="button" class="toolbtn" id="modalIpWhitelist" title="Whitelist IP — completely ignore all traffic from this address">Whitelist</button>
           <button type="button" class="toolbtn" id="modalClose">&#10005;</button>
         </div>
       </div>

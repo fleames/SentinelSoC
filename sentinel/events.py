@@ -77,8 +77,11 @@ def _process_log_event(data, source=""):
     mute_key = nip if nip is not None else (ip_raw.strip() if isinstance(ip_raw, str) else str(ip_raw))
     with state.lock:
         ip_banned = mute_key in state.banned_ips
+        ip_whitelisted = mute_key in state.whitelisted_ips
         if ip_banned:
             state.muted_hits[mute_key] += 1
+    if ip_whitelisted:
+        return "ok"
     if ip_banned:
         return "banned"
 

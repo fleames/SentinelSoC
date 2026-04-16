@@ -71,6 +71,7 @@ AUDIT_LOG_PATH = (
 BEHAVIOR_STATE_PATH = _state_file("behavior-state.json")
 PARSED_STATE_PATH = _state_file("parsed-state.json")
 PATH_WHITELIST_PATH = _state_file("path-whitelist.json")
+IP_WHITELIST_PATH   = _state_file("ip-whitelist.json")
 HISTORY_BUCKETS_PATH = _state_file("history-buckets.json")
 HISTORY_EVENTS_DIR = os.path.join(STATE_DIR, "history-events") if STATE_DIR else ""
 SSH_HISTORY_BUCKETS_PATH = _state_file("ssh-history-buckets.json")

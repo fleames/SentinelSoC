@@ -17,7 +17,7 @@ EnvironmentFile=-/opt/sentinel/.env
 Environment="SENTINEL_URL=http://127.0.0.1:5000"
 Environment="SSH_LOG_PATH=/var/log/auth.log"
 Environment="SSH_BATCH_SIZE=20"
-Environment="SSH_FLUSH_INTERVAL=5"
+Environment="SSH_FLUSH_INTERVAL=1"
 Environment="SSH_PAM_LOG=/var/log/sentinel-ssh-passwords.log"
 
 ExecStart=/usr/bin/python3 /opt/sentinel/sentinel_ssh_ingest.py

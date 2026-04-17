@@ -24,6 +24,10 @@ def geo_worker():
 def _fetch_geo(ip):
     if ip in state.geo_cache:
         return state.geo_cache[ip]
+    # Throttle when running without a token — free tier is ~50k/month.
+    if not config.IPINFO_TOKEN:
+        time.sleep(0.5)
+    result = None
     try:
         params = {"token": config.IPINFO_TOKEN} if config.IPINFO_TOKEN else {}
         r = requests.get(
@@ -31,25 +35,35 @@ def _fetch_geo(ip):
             params=params,
             timeout=4,
         )
+        if r.status_code == 429:
+            # Rate-limited: re-enqueue for later, do not cache.
+            time.sleep(60)
+            enqueue_geo(ip)
+            return {"country": "??", "asn": "Unknown"}
         r.raise_for_status()
         d = r.json()
         if "bogon" in d or d.get("error"):
-            raise ValueError(d.get("error", {}).get("message", "ipinfo bogon/error"))
-        state.geo_cache[ip] = {
-            "country": d.get("country") or "??",
-            "asn": d.get("org") or "Unknown",
-        }
+            # Bogon / private range — cache permanently so we don't retry.
+            result = {"country": "??", "asn": "bogon"}
+        else:
+            result = {
+                "country": d.get("country") or "??",
+                "asn": d.get("org") or "Unknown",
+            }
     except Exception:
-        state.geo_cache[ip] = {"country": "??", "asn": "Unknown"}
+        # Transient failure (timeout, DNS, etc.) — do not cache, retry later.
+        enqueue_geo(ip)
+        return {"country": "??", "asn": "Unknown"}
+
+    state.geo_cache[ip] = result
     with state.lock:
-        state.ip_geo[ip] = state.geo_cache[ip]
+        state.ip_geo[ip] = result
         n = state.pending_geo_hits.pop(ip, 0)
         if n:
-            g = state.geo_cache[ip]
-            state.asn_counts[g["asn"]] += n
-            state.countries[g["country"]] += n
-            state.asn_ips[g["asn"]].add(ip)
-    return state.geo_cache[ip]
+            state.asn_counts[result["asn"]] += n
+            state.countries[result["country"]] += n
+            state.asn_ips[result["asn"]].add(ip)
+    return result
 
 
 def enqueue_geo(ip):

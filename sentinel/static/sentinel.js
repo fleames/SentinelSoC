@@ -859,6 +859,7 @@ async function openIpModal(ip){
   document.getElementById('mStatGnWrap').style.display='none';
   document.getElementById('mStatGn').innerText='\u2014';
   document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">Loading\u2026</div>';
+  var _uaW=document.getElementById('modalUaWrap'); if(_uaW) _uaW.style.display='none';
   document.getElementById('modalBg').classList.add('open');
   try{
     var res=await fetch('/api/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
@@ -910,6 +911,23 @@ async function openIpModal(ip){
       tr.innerHTML='<span class="modal-tags-lbl">Tags</span>'
         +tags.map(function(t){return '<span class="tag tag-'+escapeAttr(t)+'">'+escapeHtml(t)+'</span>';}).join('');
       tr.style.display='flex';
+    }
+
+    // UA list
+    var uas=j.uas||[];
+    var uaWrap=document.getElementById('modalUaWrap');
+    var uaList=document.getElementById('modalUaList');
+    if(uaWrap&&uaList){
+      if(uas.length){
+        uaWrap.style.display='';
+        uaList.innerHTML=uas.map(function(ua){
+          return '<div class="path-row" style="grid-template-columns:1fr;padding:4px 10px">'
+            +'<span class="path-row-text" title="'+escapeAttr(ua)+'" style="color:var(--text);font-size:11px;font-family:var(--mono)">'+escapeHtml(ua)+'</span>'
+            +'</div>';
+        }).join('');
+      } else {
+        uaWrap.style.display='none';
+      }
     }
 
     // Paths list

@@ -25,6 +25,7 @@ def api_ip():
         if not isinstance(path_rows, _Counter):
             path_rows = _Counter(path_rows)
         path_rows_list = path_rows.most_common(50)
+        uas = sorted(state.ip_to_uas.get(ip, set()))
         return jsonify(
             {
                 "ip": ip,
@@ -35,6 +36,7 @@ def api_ip():
                 "tags": sorted(state.ip_tags.get(ip, ())),
                 "note": state.ip_notes.get(ip, ""),
                 "category": state.ip_categories.get(ip, ""),
+                "uas": uas,
             }
         )
 

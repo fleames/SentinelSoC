@@ -18,7 +18,10 @@ def geo_worker():
         if ip is None:
             time.sleep(0.05)
             continue
-        _fetch_geo(ip)
+        result = _fetch_geo(ip)
+        # Back off when rate-limited so we don't hammer the API.
+        if result and result.get("asn") == "Unknown" and result.get("country") == "??":
+            time.sleep(5)
 
 
 def _fetch_geo(ip):
@@ -37,7 +40,6 @@ def _fetch_geo(ip):
         )
         if r.status_code == 429:
             # Rate-limited: re-enqueue for later, do not cache.
-            time.sleep(60)
             enqueue_geo(ip)
             return {"country": "??", "asn": "Unknown"}
         r.raise_for_status()

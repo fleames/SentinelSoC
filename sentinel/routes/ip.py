@@ -8,7 +8,6 @@ from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
 from sentinel.enrichment import _fetch_shodan, _fetch_ipinfo, _fetch_abuseipdb, _fetch_greynoise, _fresh
-from sentinel.geo import _fetch_geo
 
 bp = Blueprint("ip", __name__)
 
@@ -33,15 +32,6 @@ def api_ip():
         note  = state.ip_notes.get(ip, "")
         cat   = state.ip_categories.get(ip, "")
         raw_geo = state.ip_geo.get(ip, {})
-        unresolved = (
-            raw_geo.get("country") in ("", config.PLACEHOLDER_CC, None) or
-            raw_geo.get("asn")     in ("", config.PLACEHOLDER_ASN, None)
-        )
-
-    # Outside the lock: synchronously resolve geo if still a placeholder.
-    # Adds ~1-2s latency for brand-new IPs; returns cached result otherwise.
-    if unresolved:
-        raw_geo = _fetch_geo(ip)
 
     geo = {
         "country": raw_geo.get("country", "") if raw_geo.get("country") not in ("", config.PLACEHOLDER_CC)  else "",

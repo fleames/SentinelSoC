@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
 from sentinel.enrichment import _fetch_shodan, _fetch_ipinfo, _fetch_abuseipdb, _fetch_greynoise, _fresh
+from sentinel.geo import _fetch_geo
 
 bp = Blueprint("ip", __name__)
 
@@ -20,30 +21,38 @@ def api_ip():
     with state.lock:
         if ip not in state.ips and ip not in state.ip_geo:
             return jsonify({"error": "not seen yet"}), 404
-        path_rows = state.ip_paths.get(ip, {}).copy()
         from collections import Counter as _Counter
+        path_rows = state.ip_paths.get(ip, {}).copy()
         if not isinstance(path_rows, _Counter):
             path_rows = _Counter(path_rows)
         path_rows_list = path_rows.most_common(50)
-        uas = sorted(state.ip_to_uas.get(ip, set()))
+        uas   = sorted(state.ip_to_uas.get(ip, set()))
+        hits  = int(state.ips[ip])
+        score = int(state.ip_scores[ip])
+        tags  = sorted(state.ip_tags.get(ip, ()))
+        note  = state.ip_notes.get(ip, "")
+        cat   = state.ip_categories.get(ip, "")
         raw_geo = state.ip_geo.get(ip, {})
-        geo = {
-            "country": raw_geo.get("country", "")  if raw_geo.get("country") not in ("", config.PLACEHOLDER_CC) else "",
-            "asn":     raw_geo.get("asn", "")      if raw_geo.get("asn")     not in ("", config.PLACEHOLDER_ASN) else "",
-        }
-        return jsonify(
-            {
-                "ip": ip,
-                "hits": int(state.ips[ip]),
-                "score": int(state.ip_scores[ip]),
-                "geo": geo,
-                "paths": [[p, int(c)] for p, c in path_rows_list],
-                "tags": sorted(state.ip_tags.get(ip, ())),
-                "note": state.ip_notes.get(ip, ""),
-                "category": state.ip_categories.get(ip, ""),
-                "uas": uas,
-            }
+        unresolved = (
+            raw_geo.get("country") in ("", config.PLACEHOLDER_CC, None) or
+            raw_geo.get("asn")     in ("", config.PLACEHOLDER_ASN, None)
         )
+
+    # Outside the lock: synchronously resolve geo if still a placeholder.
+    # Adds ~1-2s latency for brand-new IPs; returns cached result otherwise.
+    if unresolved:
+        raw_geo = _fetch_geo(ip)
+
+    geo = {
+        "country": raw_geo.get("country", "") if raw_geo.get("country") not in ("", config.PLACEHOLDER_CC)  else "",
+        "asn":     raw_geo.get("asn", "")     if raw_geo.get("asn")     not in ("", config.PLACEHOLDER_ASN) else "",
+    }
+
+    return jsonify({
+        "ip": ip, "hits": hits, "score": score, "geo": geo,
+        "paths": [[p, int(c)] for p, c in path_rows_list],
+        "tags": tags, "note": note, "category": cat, "uas": uas,
+    })
 
 
 @bp.route("/api/ip/note", methods=["POST"])

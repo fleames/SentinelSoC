@@ -989,6 +989,20 @@ async function openIpModal(ip){
             iEl.innerText=iParts.join(' | ');
             iEl.className='modal-stat-val';
           }
+          // Backfill geo strip if /api/ip didn't have resolved geo yet
+          var gs=document.getElementById('modalGeoStrip');
+          if(gs&&gs.style.display==='none'&&(ii.org||ii.country)){
+            var geoItems=[];
+            if(ii.org) geoItems.push(['ISP / Org',ii.org]);
+            if(ii.country&&ii.country!=='??') geoItems.push(['Country',ii.country]);
+            if(ii.city) geoItems.push(['City',ii.city]);
+            if(geoItems.length){
+              gs.innerHTML=geoItems.map(function(item){
+                return '<div class="modal-geo-item"><div class="geo-lbl">'+escapeHtml(item[0])+'</div><div class="geo-val" title="'+escapeAttr(item[1])+'">'+escapeHtml(item[1])+'</div></div>';
+              }).join('');
+              gs.style.display='flex';
+            }
+          }
         }
         // AbuseIPDB
         var ab=ej.abuseipdb||{};

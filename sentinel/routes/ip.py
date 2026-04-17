@@ -26,12 +26,17 @@ def api_ip():
             path_rows = _Counter(path_rows)
         path_rows_list = path_rows.most_common(50)
         uas = sorted(state.ip_to_uas.get(ip, set()))
+        raw_geo = state.ip_geo.get(ip, {})
+        geo = {
+            "country": raw_geo.get("country", "")  if raw_geo.get("country") not in ("", config.PLACEHOLDER_CC) else "",
+            "asn":     raw_geo.get("asn", "")      if raw_geo.get("asn")     not in ("", config.PLACEHOLDER_ASN) else "",
+        }
         return jsonify(
             {
                 "ip": ip,
                 "hits": int(state.ips[ip]),
                 "score": int(state.ip_scores[ip]),
-                "geo": state.ip_geo.get(ip, {}),
+                "geo": geo,
                 "paths": [[p, int(c)] for p, c in path_rows_list],
                 "tags": sorted(state.ip_tags.get(ip, ())),
                 "note": state.ip_notes.get(ip, ""),

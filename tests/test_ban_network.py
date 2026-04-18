@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sentinel import state
 from sentinel.events import _process_log_event
-from sentinel.helpers import _normalize_client_ip_or_network
+from sentinel.helpers import _normalize_client_ip_or_network, _tag_bad_network_or_asn
 
 
 def _reset():
@@ -73,6 +73,24 @@ class TestCIDRBan(unittest.TestCase):
         self.assertEqual(result, "banned")
         with state.lock:
             self.assertEqual(state.muted_hits.get("203.0.113.5"), 1)
+
+    def test_tag_bad_network_on_cidr_ban(self):
+        with state.lock:
+            state.ip_geo["203.0.113.5"] = {"asn": "AS65535"}
+        _tag_bad_network_or_asn("203.0.113.0/24")
+        with state.lock:
+            self.assertIn("bad_network", state.ip_tags.get("203.0.113.0/24", set()))
+            self.assertIn("bad_network", state.ip_tags.get("203.0.113.5", set()))
+
+    def test_tag_bad_asn_on_ip_ban(self):
+        with state.lock:
+            state.ip_geo["198.51.100.1"] = {"asn": "AS65535"}
+            state.asn_ips["AS65535"].add("198.51.100.1")
+            state.asn_ips["AS65535"].add("198.51.100.2")
+        _tag_bad_network_or_asn("198.51.100.1")
+        with state.lock:
+            self.assertIn("bad_asn", state.ip_tags.get("198.51.100.1", set()))
+            self.assertIn("bad_asn", state.ip_tags.get("198.51.100.2", set()))
 
 
 if __name__ == "__main__":

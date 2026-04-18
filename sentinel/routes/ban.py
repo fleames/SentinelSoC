@@ -6,7 +6,11 @@ from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
 from sentinel.auth import _audit_actor, _audit_write
-from sentinel.helpers import _normalize_client_ip_or_network, _is_protected_ip
+from sentinel.helpers import (
+    _normalize_client_ip_or_network,
+    _is_protected_ip,
+    _tag_bad_network_or_asn,
+)
 from sentinel.persistence import _iptables_drop, _refresh_banned_ip_networks, _save_bans
 
 bp = Blueprint("ban", __name__)
@@ -30,6 +34,7 @@ def api_ban():
         else:
             state.ban_notes.pop(nip, None)
         _refresh_banned_ip_networks()
+        _tag_bad_network_or_asn(nip)
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, True)
     audit_detail = {"ip": nip}

@@ -57,6 +57,32 @@ def _is_protected_ip(s):
         return False
 
 
+def _tag_bad_network_or_asn(target):
+    """Tag a banned IP or network as bad for UI/reporting."""
+    if not target or not isinstance(target, str):
+        return
+    if "/" in target:
+        try:
+            net = ipaddress.ip_network(target.strip(), strict=False)
+        except ValueError:
+            return
+        state.ip_tags[target].add("bad_network")
+        for ip in list(state.ip_geo.keys()):
+            try:
+                if ipaddress.ip_address(ip) in net:
+                    state.ip_tags[ip].add("bad_network")
+            except ValueError:
+                continue
+        return
+
+    geo = state.ip_geo.get(target, {})
+    asn = geo.get("asn")
+    if asn and asn != config.PLACEHOLDER_ASN:
+        state.ip_tags[target].add("bad_asn")
+        for ip in state.asn_ips.get(asn, ()):
+            state.ip_tags[ip].add("bad_asn")
+
+
 def _ip_subnet(ip):
     """Return /24 (IPv4) or /48 (IPv6) prefix string for subnet-diversity checks."""
     try:

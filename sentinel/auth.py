@@ -10,7 +10,7 @@ import sys
 from flask import Response, request
 
 from sentinel import config, state
-from sentinel.helpers import _normalize_client_ip
+from sentinel.helpers import _normalize_client_ip, _tag_bad_network_or_asn
 
 
 def _password_matches(got, expected):
@@ -75,6 +75,7 @@ def _auto_ban(ip, reason):
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)
         state.ban_notes[nip] = f"auto: {reason}"
+        _tag_bad_network_or_asn(nip)
     _save_bans()
     _iptables_drop(nip, True)
     _audit_write("auto_ban", "sentinel", {"ip": nip, "reason": reason})

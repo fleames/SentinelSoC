@@ -3,6 +3,7 @@
 sentinel/events.py -- _process_log_event: ingest one access-log dict into state.
 """
 import hashlib
+import ipaddress
 import math
 import sys
 import time
@@ -77,6 +78,12 @@ def _process_log_event(data, source=""):
     mute_key = nip if nip is not None else (ip_raw.strip() if isinstance(ip_raw, str) else str(ip_raw))
     with state.lock:
         ip_banned = mute_key in state.banned_ips
+        if not ip_banned and nip is not None:
+            try:
+                ip_addr = ipaddress.ip_address(nip)
+                ip_banned = any(ip_addr in net for net in state.banned_ip_networks)
+            except ValueError:
+                ip_banned = False
         ip_whitelisted = mute_key in state.whitelisted_ips
         if ip_banned:
             state.muted_hits[mute_key] += 1

@@ -6,8 +6,8 @@ from flask import Blueprint, jsonify, request
 
 from sentinel import config, state
 from sentinel.auth import _audit_actor, _audit_write
-from sentinel.helpers import _normalize_client_ip, _is_protected_ip
-from sentinel.persistence import _iptables_drop, _save_bans
+from sentinel.helpers import _normalize_client_ip_or_network, _is_protected_ip
+from sentinel.persistence import _iptables_drop, _refresh_banned_ip_networks, _save_bans
 
 bp = Blueprint("ban", __name__)
 
@@ -16,7 +16,7 @@ bp = Blueprint("ban", __name__)
 def api_ban():
     body = request.get_json(silent=True) or {}
     raw = (body.get("ip") or request.args.get("ip") or "").strip()
-    nip = _normalize_client_ip(raw)
+    nip = _normalize_client_ip_or_network(raw)
     if not nip:
         return jsonify({"error": "invalid ip"}), 400
     if _is_protected_ip(nip):
@@ -29,6 +29,7 @@ def api_ban():
             state.ban_notes[nip] = note
         else:
             state.ban_notes.pop(nip, None)
+        _refresh_banned_ip_networks()
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, True)
     audit_detail = {"ip": nip}
@@ -49,13 +50,14 @@ def api_ban():
 def api_unban():
     body = request.get_json(silent=True) or {}
     raw = (body.get("ip") or request.args.get("ip") or "").strip()
-    nip = _normalize_client_ip(raw)
+    nip = _normalize_client_ip_or_network(raw)
     if not nip:
         return jsonify({"error": "invalid ip"}), 400
     with state.lock:
         state.banned_ips.discard(nip)
         state.muted_hits.pop(nip, None)
         state.ban_notes.pop(nip, None)
+        _refresh_banned_ip_networks()
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, False)
     _audit_write("unban", _audit_actor(), {"ip": nip})

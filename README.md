@@ -326,8 +326,8 @@ Reference Caddyfile snippets: `caddy-recommended.caddyfile`.
 | GET | `/api/settings` | View current runtime detection thresholds |
 | POST | `/api/settings` | Update one or more runtime thresholds (JSON body) |
 | GET | `/api/storage` | Disk usage for `SENTINEL_STATE_DIR` |
-| POST | `/api/ban` | JSON body `{"ip":"…"}` or `?ip=` — mute IP |
-| POST | `/api/unban` | Unmute IP |
+| POST | `/api/ban` | JSON body `{"ip":"…"}` or `?ip=` — mute IP or CIDR block |
+| POST | `/api/unban` | Unmute IP or CIDR block |
 | POST | `/api/reset` | Clear all in-memory metrics including SSH state (tail keeps running) |
 | POST | `/api/ingest` | Receive NDJSON batches from push agents (Bearer auth via `SENTINEL_INGEST_KEY`) |
 | POST | `/api/tls_fp/delete` | Remove a TLS fingerprint group from tracking |

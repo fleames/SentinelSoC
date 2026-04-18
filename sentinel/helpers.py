@@ -24,20 +24,34 @@ def _normalize_client_ip(s):
         return None
 
 
+def _normalize_client_ip_or_network(s):
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if s in ("-", "", "unknown"):
+        return None
+    try:
+        if "/" in s:
+            return str(ipaddress.ip_network(s, strict=False))
+        return str(ipaddress.ip_address(s))
+    except ValueError:
+        return None
+
+
 def _is_protected_ip(s):
-    """Return True if the IP is private, loopback, link-local, or otherwise
+    """Return True if the IP or network is private, loopback, link-local, or otherwise
     not a routable public address that should never be banned."""
     if not s or not isinstance(s, str):
         return True
     try:
-        addr = ipaddress.ip_address(s.strip())
+        obj = ipaddress.ip_network(s.strip(), strict=False)
         return (
-            addr.is_private
-            or addr.is_loopback
-            or addr.is_link_local
-            or addr.is_multicast
-            or addr.is_reserved
-            or addr.is_unspecified
+            obj.is_private
+            or obj.is_loopback
+            or obj.is_link_local
+            or obj.is_multicast
+            or obj.is_reserved
+            or obj.is_unspecified
         )
     except ValueError:
         return False

@@ -19,6 +19,7 @@ _mkdir_done = set()
 from sentinel import config, state
 from sentinel.helpers import (
     _normalize_client_ip,
+    _normalize_client_ip_or_network,
     _history_bucket,
     _history_bucket_to_json,
     _prune_runtime_state,
@@ -30,17 +31,17 @@ from sentinel.helpers import (
 # ========================
 def _iptables_drop(ip_normalized, add):
     """
-    Insert or remove INPUT DROP for one IP. Uses iptables / ip6tables as list args (no shell).
+    Insert or remove INPUT DROP for one IP or CIDR network. Uses iptables / ip6tables as list args (no shell).
     Returns (ok, error_message_or_None).
     """
     if not config.IPTABLES_ENABLED:
         return True, None
     try:
-        ip = ipaddress.ip_address(ip_normalized)
+        net = ipaddress.ip_network(ip_normalized, strict=False)
     except ValueError:
         return False, "invalid ip"
-    ip_s = ip.compressed if ip.version == 6 else str(ip)
-    bin_name = "ip6tables" if ip.version == 6 else "iptables"
+    ip_s = str(net)
+    bin_name = "ip6tables" if net.version == 6 else "iptables"
     chain = config.IPTABLES_CHAIN
     check = [bin_name, "-C", chain, "-s", ip_s, "-j", "DROP"]
     r = subprocess.run(check, capture_output=True, timeout=25)
@@ -73,6 +74,16 @@ def _sync_iptables_bans():
         _iptables_drop(ip, True)
 
 
+def _refresh_banned_ip_networks():
+    state.banned_ip_networks.clear()
+    for ip in state.banned_ips:
+        if "/" in ip:
+            try:
+                state.banned_ip_networks.add(ipaddress.ip_network(ip, strict=False))
+            except ValueError:
+                pass
+
+
 # ========================
 # BANS
 # ========================
@@ -87,13 +98,13 @@ def _load_bans():
         if isinstance(data, list):
             # Legacy format: plain list of IPs, no notes.
             for x in data:
-                n = _normalize_client_ip(str(x))
+                n = _normalize_client_ip_or_network(str(x))
                 if n:
                     new_ips.add(n)
         elif isinstance(data, dict):
             # New format: {"ip": "note", ...}
             for x, note in data.items():
-                n = _normalize_client_ip(str(x))
+                n = _normalize_client_ip_or_network(str(x))
                 if n:
                     new_ips.add(n)
                     if note:
@@ -102,6 +113,7 @@ def _load_bans():
             state.banned_ips.clear()
             state.banned_ips.update(new_ips)
             state.ban_notes.update(new_notes)
+            _refresh_banned_ip_networks()
     except (OSError, json.JSONDecodeError, TypeError):
         pass
 

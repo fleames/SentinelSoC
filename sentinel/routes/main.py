@@ -37,7 +37,12 @@ def data():
         attack_rps = state.attack_timeline[-1] if state.attack_timeline else 0
         level, level_color = threat_level_label(attack_rps, err_rate, top_share)
 
-        top_threats = sorted(state.ip_scores.items(), key=lambda x: -x[1])[:20]
+        # Keep the HTTP threat board HTTP-only: SSH-only IPs have no HTTP hit counter.
+        top_threats = [
+            (ip, sc)
+            for ip, sc in sorted(state.ip_scores.items(), key=lambda x: -x[1])
+            if state.ips.get(ip, 0) > 0
+        ][:20]
         threats_enriched = []
         for tip, sc in top_threats:
             if sc <= 0:

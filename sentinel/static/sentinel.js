@@ -1640,7 +1640,9 @@ document.addEventListener('click',async function(e){
       +'<option value="http_abuse">HTTP abuse</option>'
       +'<option value="audit">Audit ban</option>'
       +'<option value="scanner">Scanner</option>'
-      +'<option value="brute_force">Brute force</option>';
+      +'<option value="brute_force">Brute force</option>'
+      +'<option value="bad_network">Bad Network</option>'
+      +'<option value="bad_asn">Bad ASN</option>';
     wrap.innerHTML='<select class="ban-inp ban-note-sel audit-ban-note" style="max-width:115px;padding:2px 6px;font-size:10px;height:22px">'+noteOpts+'</select>'
       +'<button type="button" class="toolbtn danger audit-ban-confirm" data-ip="'+escapeAttr(ip)+'" style="font-size:9px;padding:2px 7px">Mute</button>'
       +'<button type="button" class="toolbtn audit-ban-cancel" style="font-size:9px;padding:2px 6px">✕</button>';

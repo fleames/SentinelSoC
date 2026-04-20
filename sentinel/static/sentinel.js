@@ -30,6 +30,8 @@ let historyTotal=0;
 let historySelectedDay='';
 let historyDaysLoaded=false;
 let currentBannedSet=new Set();
+let banListPage=1;
+const BAN_LIST_PAGE_SIZE=25;
 
 /* Tab visibility for alert count */
 document.addEventListener('visibilitychange',function(){
@@ -708,8 +710,22 @@ function renderBanList(d){
   var bans=d.banned_ips||[];
   var mh=d.muted_hits||{};
   var notes=d.ban_notes||{};
-  if(!bans.length){ el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No muted IPs</span></div>'; return; }
-  el.innerHTML=bans.map(function(ip){
+  if(!bans.length){
+    banListPage=1;
+    el.innerHTML='<div class="list-row"><span class="list-key" style="color:var(--muted)">No muted IPs</span></div>';
+    return;
+  }
+
+  var total=bans.length;
+  var totalPages=Math.max(1,Math.ceil(total/BAN_LIST_PAGE_SIZE));
+  if(banListPage<1) banListPage=1;
+  if(banListPage>totalPages) banListPage=totalPages;
+
+  var start=(banListPage-1)*BAN_LIST_PAGE_SIZE;
+  var end=Math.min(total,start+BAN_LIST_PAGE_SIZE);
+  var pageRows=bans.slice(start,end);
+
+  var rowsHtml=pageRows.map(function(ip){
     var c=mh[ip]||0;
     var note=notes[ip]||'';
     var noteHtml='';
@@ -725,6 +741,25 @@ function renderBanList(d){
       +'<span class="cnt">'+c+' excl.</span>'
       +'<button type="button" class="toolbtn" data-unban="'+escapeAttr(ip)+'">Unmute</button></div>';
   }).join('');
+
+  if(totalPages<=1){
+    el.innerHTML=rowsHtml;
+    return;
+  }
+
+  var prevDisabled=banListPage<=1?'disabled':'';
+  var nextDisabled=banListPage>=totalPages?'disabled':'';
+  var pagerHtml=''
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 2px 0">'
+      +'<span style="font-size:11px;color:var(--muted)">Showing '+(start+1)+'-'+end+' of '+total+'</span>'
+      +'<div style="display:flex;align-items:center;gap:6px">'
+        +'<button type="button" class="toolbtn" data-ban-page="prev" '+prevDisabled+'>Prev</button>'
+        +'<span style="font-size:11px;color:var(--muted)">Page '+banListPage+' / '+totalPages+'</span>'
+        +'<button type="button" class="toolbtn" data-ban-page="next" '+nextDisabled+'>Next</button>'
+      +'</div>'
+    +'</div>';
+
+  el.innerHTML=rowsHtml+pagerHtml;
 }
 
 /* Poll control */
@@ -1360,6 +1395,13 @@ document.getElementById('btnBan').addEventListener('click',async function(){
   }catch(e){ alert('Mute failed'); }
 });
 document.getElementById('banList').addEventListener('click',async function(e){
+  var pg=e.target.closest('[data-ban-page]');
+  if(pg&&pg.dataset.banPage){
+    if(pg.dataset.banPage==='prev'&&banListPage>1) banListPage-=1;
+    if(pg.dataset.banPage==='next') banListPage+=1;
+    if(lastPayload) renderBanList(lastPayload);
+    return;
+  }
   var b=e.target.closest('[data-unban]');
   if(!b||!b.dataset.unban) return;
   var ip=b.dataset.unban;

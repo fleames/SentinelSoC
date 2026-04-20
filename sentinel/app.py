@@ -128,13 +128,14 @@ def start_background_threads(app):
         _ingest_worker,
     )
     from sentinel.botnet import botnet_detection_worker
-    from sentinel.persistence import _sync_iptables_bans
+    from sentinel.persistence import _sync_iptables_bans, _expire_bans
     from sentinel.reputation import reputation_worker
 
     # ========================
     # INIT STATE
     # ========================
     try:
+        _expire_bans()
         _sync_iptables_bans()
         log.info("[startup] iptables sync complete")
     except Exception as e:

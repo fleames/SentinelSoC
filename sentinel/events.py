@@ -24,6 +24,7 @@ from sentinel.helpers import (
     _normalize_uri_campaign,
     _update_history_bucket,
     _update_ssh_history_bucket,
+    _is_protected_ip,
     extract_request_host,
     _header_first,
 )
@@ -158,6 +159,8 @@ def _process_log_event(data, source=""):
     ssh_src_port_raw = (_header_first(headers, "X-SSH-Src-Port", "x-ssh-src-port") or "") if is_ssh else ""
     ssh_pw_event     = (_header_first(headers, "X-SSH-PW-Event", "x-ssh-pw-event") or "") if is_ssh else ""
     ssh_password     = (_header_first(headers, "X-SSH-Password", "x-ssh-password") or "") if is_ssh else ""
+    ssh_auto_ban_ip = None
+    ssh_auto_ban_reason = ""
 
     with state.lock:
         # Password-only event from the PAM log: store user+password combo.
@@ -174,7 +177,17 @@ def _process_log_event(data, source=""):
         if is_ssh:
             state.ssh_total += 1
             state.ssh_ips[ip] += 1
+            ssh_ip_tries = state.ssh_ips[ip]
             state.counters["ssh_current_second"] = state.counters.get("ssh_current_second", 0) + 1
+            if (
+                config.SSH_AUTO_BAN_TRIES > 0
+                and config.SSH_AUTO_BAN_TTL_S > 0
+                and ssh_ip_tries >= config.SSH_AUTO_BAN_TRIES
+                and ip not in state.banned_ips
+                and not _is_protected_ip(ip)
+            ):
+                ssh_auto_ban_ip = ip
+                ssh_auto_ban_reason = f"ssh_fail_{ssh_ip_tries}x"
             # Extract username from synthetic UA: SSH-client/<username>
             ssh_user = ua[len("SSH-client/"):].strip() if ua.startswith("SSH-client/") else ""
             if ssh_user:
@@ -371,6 +384,10 @@ def _process_log_event(data, source=""):
             _update_history_bucket(ts_epoch, ip, path_bucket, status, s)
         if source:
             state.sources[source] += 1
+
+    if ssh_auto_ban_ip:
+        from sentinel.auth import _auto_ban
+        _auto_ban(ssh_auto_ban_ip, ssh_auto_ban_reason, ttl_s=config.SSH_AUTO_BAN_TTL_S)
 
     if country_u == config.PLACEHOLDER_CC or asn_u == config.PLACEHOLDER_ASN:
         enqueue_geo(ip)

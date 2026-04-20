@@ -29,6 +29,7 @@ def api_ban():
     with state.lock:
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)
+        state.ban_expires_at.pop(nip, None)
         if note:
             state.ban_notes[nip] = note
         else:
@@ -46,6 +47,7 @@ def api_ban():
             "ok": True,
             "banned_ips": sorted(state.banned_ips),
             "ban_notes": dict(state.ban_notes),
+            "ban_expires_at": dict(state.ban_expires_at),
             "iptables": {"enabled": config.IPTABLES_ENABLED, "ok": ok_ipt, "error": ipt_err},
         }
     )
@@ -62,6 +64,7 @@ def api_unban():
         state.banned_ips.discard(nip)
         state.muted_hits.pop(nip, None)
         state.ban_notes.pop(nip, None)
+        state.ban_expires_at.pop(nip, None)
         _refresh_banned_ip_networks()
     _save_bans()
     ok_ipt, ipt_err = _iptables_drop(nip, False)
@@ -71,6 +74,7 @@ def api_unban():
             "ok": True,
             "banned_ips": sorted(state.banned_ips),
             "ban_notes": dict(state.ban_notes),
+            "ban_expires_at": dict(state.ban_expires_at),
             "iptables": {"enabled": config.IPTABLES_ENABLED, "ok": ok_ipt, "error": ipt_err},
         }
     )

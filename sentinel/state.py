@@ -75,6 +75,7 @@ banned_ips = set()
 banned_ip_networks = set()   # ipaddress.ip_network objects for CIDR bans
 muted_hits = Counter()
 ban_notes = {}   # ip -> analyst note e.g. "http_abuse", "audit", "auto: <reason>"
+ban_expires_at = {}   # ip -> unix epoch (float) when temporary ban expires
 
 # Path whitelist: zero-score, skip path counters and history for matching paths.
 whitelisted_paths = set()   # set of path prefix strings e.g. "/locales/", "/api/health"

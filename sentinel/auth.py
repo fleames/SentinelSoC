@@ -6,6 +6,7 @@ NOTE: _sentinel_auth_gate is NOT decorated with @app.before_request here.
 """
 import secrets
 import sys
+import time
 
 from flask import Response, request
 
@@ -63,23 +64,43 @@ def _sentinel_auth_gate():
     return None
 
 
-def _auto_ban(ip, reason):
+def _auto_ban(ip, reason, ttl_s=None):
     """Ban an IP programmatically and write an auto_ban audit entry."""
-    from sentinel.persistence import _save_bans, _iptables_drop
+    from sentinel.persistence import _save_bans, _iptables_drop, _refresh_banned_ip_networks
     nip = _normalize_client_ip(ip)
     if not nip:
         return
+    expires_at = None
+    if ttl_s is not None:
+        try:
+            ttl_v = float(ttl_s)
+            if ttl_v > 0:
+                expires_at = time.time() + ttl_v
+        except (TypeError, ValueError):
+            expires_at = None
     with state.lock:
         if nip in state.banned_ips:
             return
         state.banned_ips.add(nip)
         state.muted_hits.pop(nip, None)
         state.ban_notes[nip] = f"auto: {reason}"
+        if expires_at is not None:
+            state.ban_expires_at[nip] = expires_at
+        else:
+            state.ban_expires_at.pop(nip, None)
+        _refresh_banned_ip_networks()
         _tag_bad_network_or_asn(nip)
     _save_bans()
     _iptables_drop(nip, True)
-    _audit_write("auto_ban", "sentinel", {"ip": nip, "reason": reason})
-    print(f"[sentinel] auto-ban {nip!r}: {reason}", file=sys.stderr, flush=True)
+    detail = {"ip": nip, "reason": reason}
+    if expires_at is not None:
+        detail["expires_at"] = int(expires_at)
+    _audit_write("auto_ban", "sentinel", detail)
+    if expires_at is not None:
+        ttl_h = max(0.0, (expires_at - time.time()) / 3600.0)
+        print(f"[sentinel] auto-ban {nip!r}: {reason} ttl={ttl_h:.2f}h", file=sys.stderr, flush=True)
+    else:
+        print(f"[sentinel] auto-ban {nip!r}: {reason}", file=sys.stderr, flush=True)
 
 
 def _audit_write(action, user, detail=None):

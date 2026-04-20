@@ -11,6 +11,7 @@ from sentinel.events import _process_log_event
 from sentinel.helpers import _prune_runtime_state
 from sentinel.parsing import iter_caddy_log_objects
 from sentinel.persistence import (
+    _expire_bans,
     _prune_history_event_files,
     _prune_ssh_history_event_files,
     _save_behavior_state,
@@ -46,6 +47,8 @@ def reset():
             ticks += 1
             if ticks % 30 == 0:
                 _prune_runtime_state()
+        if ticks % 5 == 0:
+            _expire_bans()
         if ticks % 60 == 0:
             _prune_history_event_files()
             _prune_ssh_history_event_files()

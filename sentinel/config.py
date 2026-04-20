@@ -224,6 +224,8 @@ SLOW_LOW_MIN_PATHS = _int(os.environ.get("SENTINEL_SLOW_LOW_MIN_PATHS", 15), 15)
 # ========================
 SSH_KEX_SHARED_THRESHOLD = _int(os.environ.get("SENTINEL_SSH_KEX_SHARED_THRESHOLD", 3), 3)
 SSH_PORT_ENTROPY_LOW = _float(os.environ.get("SENTINEL_SSH_PORT_ENTROPY_LOW", 1.5), 1.5)
+SSH_AUTO_BAN_TRIES = _int(os.environ.get("SENTINEL_SSH_AUTO_BAN_TRIES", 5), 5)
+SSH_AUTO_BAN_TTL_S = _int(os.environ.get("SENTINEL_SSH_AUTO_BAN_TTL_S", 86400), 86400)
 
 # ========================
 # BOTNET (extended)

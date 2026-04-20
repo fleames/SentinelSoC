@@ -95,6 +95,8 @@ def _load_bans():
             data = json.load(f)
         new_ips = set()
         new_notes = {}
+        new_expires = {}
+        now = time.time()
         if isinstance(data, list):
             # Legacy format: plain list of IPs, no notes.
             for x in data:
@@ -102,17 +104,38 @@ def _load_bans():
                 if n:
                     new_ips.add(n)
         elif isinstance(data, dict):
-            # New format: {"ip": "note", ...}
+            # New format: {"ip": "note"|{"note": "...", "expires_at": 123}, ...}
             for x, note in data.items():
                 n = _normalize_client_ip_or_network(str(x))
-                if n:
-                    new_ips.add(n)
-                    if note:
-                        new_notes[n] = str(note)
+                if not n:
+                    continue
+                exp_ts = None
+                if isinstance(note, dict):
+                    note_s = str(note.get("note", "") or "").strip()[:200]
+                    raw_exp = note.get("expires_at")
+                    try:
+                        exp_v = float(raw_exp)
+                        if exp_v > 0:
+                            exp_ts = exp_v
+                    except (TypeError, ValueError):
+                        exp_ts = None
+                else:
+                    note_s = str(note or "").strip()[:200]
+                if exp_ts is not None and exp_ts <= now:
+                    # Skip bans already expired while Sentinel was down.
+                    continue
+                new_ips.add(n)
+                if note_s:
+                    new_notes[n] = note_s
+                if exp_ts is not None:
+                    new_expires[n] = exp_ts
         with state.lock:
             state.banned_ips.clear()
             state.banned_ips.update(new_ips)
+            state.ban_notes.clear()
             state.ban_notes.update(new_notes)
+            state.ban_expires_at.clear()
+            state.ban_expires_at.update(new_expires)
             _refresh_banned_ip_networks()
     except (OSError, json.JSONDecodeError, TypeError):
         pass
@@ -123,7 +146,19 @@ def _save_bans():
         return
     try:
         with state.lock:
-            payload = {ip: state.ban_notes.get(ip, "") for ip in sorted(state.banned_ips)}
+            payload = {}
+            for ip in sorted(state.banned_ips):
+                note = str(state.ban_notes.get(ip, "") or "")[:200]
+                exp = state.ban_expires_at.get(ip)
+                if exp is not None:
+                    try:
+                        exp_v = float(exp)
+                    except (TypeError, ValueError):
+                        exp_v = None
+                    if exp_v is not None and exp_v > 0:
+                        payload[ip] = {"note": note, "expires_at": int(exp_v)}
+                        continue
+                payload[ip] = note
         d = os.path.dirname(config.BAN_LIST_PATH) or "."
         os.makedirs(d, exist_ok=True)
         tmp = config.BAN_LIST_PATH + ".tmp"
@@ -132,6 +167,51 @@ def _save_bans():
         os.replace(tmp, config.BAN_LIST_PATH)
     except OSError:
         pass
+
+
+def _expire_bans(now=None):
+    """Unban any temporary bans whose expiry has passed.
+
+    Returns list of IPs that were auto-unbanned.
+    """
+    now = time.time() if now is None else float(now)
+    expired = []
+    dirty = False
+    with state.lock:
+        for ip, exp in list(state.ban_expires_at.items()):
+            if ip not in state.banned_ips:
+                state.ban_expires_at.pop(ip, None)
+                dirty = True
+                continue
+            try:
+                exp_ts = float(exp)
+            except (TypeError, ValueError):
+                state.ban_expires_at.pop(ip, None)
+                dirty = True
+                continue
+            if exp_ts <= now:
+                expired.append(ip)
+
+        if expired:
+            for ip in expired:
+                state.banned_ips.discard(ip)
+                state.muted_hits.pop(ip, None)
+                state.ban_notes.pop(ip, None)
+                state.ban_expires_at.pop(ip, None)
+            _refresh_banned_ip_networks()
+
+    if not expired and not dirty:
+        return []
+
+    _save_bans()
+    for ip in expired:
+        _iptables_drop(ip, False)
+        try:
+            from sentinel.auth import _audit_write
+            _audit_write("auto_unban", "sentinel", {"ip": ip, "reason": "ban_expired"})
+        except Exception:
+            pass
+    return expired
 
 
 # ========================
@@ -425,6 +505,7 @@ def _save_parsed_state():
             "stream_parse_debug": dict(state.stream_parse_debug),
             "muted_hits": {str(k): int(v) for k, v in state.muted_hits.items()},
             "ban_notes": {str(k): str(v) for k, v in state.ban_notes.items()},
+            "ban_expires_at": {str(k): float(v) for k, v in state.ban_expires_at.items()},
             "sources": [[str(k), int(v)] for k, v in state.sources.items()],
             "ssh_total": int(state.ssh_total),
             "ssh_ips": [[str(k), int(v)] for k, v in state.ssh_ips.items()],
@@ -596,6 +677,12 @@ def _load_parsed_state():
 
         state.ban_notes.clear()
         state.ban_notes.update({str(k): str(v) for k, v in dict(data.get("ban_notes", {})).items() if v})
+        state.ban_expires_at.clear()
+        state.ban_expires_at.update({
+            str(k): float(v)
+            for k, v in dict(data.get("ban_expires_at", {})).items()
+            if str(k) in state.banned_ips
+        })
 
         state.sources.clear()
         state.sources.update({str(k): int(v) for k, v in list(data.get("sources", []))})

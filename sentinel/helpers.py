@@ -39,12 +39,14 @@ def _normalize_client_ip_or_network(s):
 
 
 def _is_protected_ip(s):
-    """Return True if the IP or network is private, loopback, link-local, or otherwise
-    not a routable public address that should never be banned."""
+    """Return True if the IP or network must never be banned (private/reserved or explicitly protected)."""
     if not s or not isinstance(s, str):
         return True
+    s = s.strip()
+    if s in config.PROTECTED_IPS:
+        return True
     try:
-        obj = ipaddress.ip_network(s.strip(), strict=False)
+        obj = ipaddress.ip_network(s, strict=False)
         return (
             obj.is_private
             or obj.is_loopback

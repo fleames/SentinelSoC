@@ -67,8 +67,9 @@ def _sentinel_auth_gate():
 def _auto_ban(ip, reason, ttl_s=None):
     """Ban an IP programmatically and write an auto_ban audit entry."""
     from sentinel.persistence import _save_bans, _iptables_drop, _refresh_banned_ip_networks
+    from sentinel.helpers import _is_protected_ip
     nip = _normalize_client_ip(ip)
-    if not nip:
+    if not nip or _is_protected_ip(nip):
         return
     expires_at = None
     if ttl_s is not None:

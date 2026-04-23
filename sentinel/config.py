@@ -220,6 +220,12 @@ SLOW_LOW_MIN_HOURS = _float(os.environ.get("SENTINEL_SLOW_LOW_MIN_HOURS", 2.0), 
 SLOW_LOW_MIN_PATHS = _int(os.environ.get("SENTINEL_SLOW_LOW_MIN_PATHS", 15), 15)
 
 # ========================
+# PROTECTED IPs (never ban, never mute — manual or automatic)
+# ========================
+_PROTECTED_IPS_RAW = os.environ.get("SENTINEL_PROTECTED_IPS", "152.53.137.180").strip()
+PROTECTED_IPS = frozenset(x.strip() for x in _PROTECTED_IPS_RAW.split(",") if x.strip())
+
+# ========================
 # SSH DETECTION
 # ========================
 SSH_KEX_SHARED_THRESHOLD = _int(os.environ.get("SENTINEL_SSH_KEX_SHARED_THRESHOLD", 3), 3)

@@ -55,10 +55,19 @@ def reset():
 
 
 def reset_dashboard_state():
-    """Clear all counters, timelines, geo cache, and alerts. Log reader thread keeps running."""
-    with state.geo_lock:
-        state.geo_queue.clear()
+    """Clear all counters, timelines, geo cache, and alerts. Log reader thread keeps running.
+
+    Lock order: state.lock → geo_lock, botnet_lock, reputation_lock (all nested).
+    All four locks are acquired atomically so no partial reset is visible to other threads.
+    """
     with state.lock:
+        # --- geo ---
+        with state.geo_lock:
+            state.geo_queue.clear()
+        state.geo_cache.clear()
+        state.pending_geo_hits.clear()
+
+        # --- HTTP traffic ---
         state.ips.clear()
         state.domains.clear()
         state.referers.clear()
@@ -71,9 +80,16 @@ def reset_dashboard_state():
         state.ip_paths.clear()
         state.ip_tags.clear()
         state.asn_ips.clear()
-        state.geo_cache.clear()
         state.recent_alerts.clear()
-        state.pending_geo_hits.clear()
+        state.rps_timeline.clear()
+        state.attack_timeline.clear()
+        state.muted_hits.clear()
+        state.tls_fp_to_ips.clear()
+        state.ip_tls_fp.clear()
+        state.ua_burst_window.clear()
+        state.ip_hosts.clear()
+
+        # --- counters ---
         state.counters["rps"] = 0
         state.counters["total"] = 0
         state.counters["current_second"] = 0
@@ -82,14 +98,14 @@ def reset_dashboard_state():
         state.counters["client_err"] = 0
         state.counters["server_err"] = 0
         state.counters["bytes_served"] = 0
-        state.rps_timeline.clear()
-        state.attack_timeline.clear()
         state.counters["stream_started_at"] = time.time()
-        state.muted_hits.clear()
+        state.counters["ssh_current_second"] = 0
         state.stream_parse_debug["text_lines"] = 0
         state.stream_parse_debug["json_roots"] = 0
         state.stream_parse_debug["dicts_yielded"] = 0
         state.stream_parse_debug["buffer_overflows"] = 0
+
+        # --- fingerprint / behavior ---
         state.suspicious_hit_buffer.clear()
         state.fp_counts.clear()
         state.fp_last_seen.clear()
@@ -102,13 +118,8 @@ def reset_dashboard_state():
         state.sources.clear()
         state.behavior_signal_counts.clear()
         state.history_buckets.clear()
-    with state.botnet_lock:
-        state.botnet_campaigns.clear()
-    with state.lock:
-        state.tls_fp_to_ips.clear()
-        state.ip_tls_fp.clear()
-        state.ua_burst_window.clear()
-        state.ip_hosts.clear()
+
+        # --- SSH ---
         state.ssh_ips.clear()
         state.ssh_total = 0
         state.ssh_usernames.clear()
@@ -119,7 +130,6 @@ def reset_dashboard_state():
         state.ssh_recent_alerts.clear()
         state.ssh_history_events.clear()
         state.ssh_history_buckets.clear()
-        state.counters["ssh_current_second"] = 0
         state.ssh_ip_auth_methods.clear()
         state.ssh_auth_method_totals.clear()
         state.ssh_ip_wordlist_fp.clear()
@@ -133,9 +143,15 @@ def reset_dashboard_state():
         state.ssh_kex_fp_ips.clear()
         state.ssh_ip_src_ports.clear()
         state.ssh_ip_port_entropy.clear()
-    with state.reputation_lock:
-        state.reputation_queue.clear()
-        state.reputation_seen.clear()
+
+        # --- botnet ---
+        with state.botnet_lock:
+            state.botnet_campaigns.clear()
+
+        # --- reputation ---
+        with state.reputation_lock:
+            state.reputation_queue.clear()
+            state.reputation_seen.clear()
 
 
 def stream(path=None, from_start=None, source_label=None):

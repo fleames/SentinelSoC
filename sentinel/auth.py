@@ -50,12 +50,15 @@ def _sentinel_auth_gate():
             ra = request.remote_addr
             nip = _normalize_client_ip(ra) if ra else None
             if nip:
-                with state.audit_lock:
+                _ban_nip = None
+                with state.lock:
                     state.auth_fail_counts[nip] += 1
                     count = state.auth_fail_counts[nip]
-                if count >= config.AUTH_FAIL_BAN_THRESHOLD:
-                    state.auth_fail_counts.pop(nip, None)
-                    _auto_ban(nip, f"auth_fail_{count}x")
+                    if count >= config.AUTH_FAIL_BAN_THRESHOLD:
+                        state.auth_fail_counts.pop(nip, None)
+                        _ban_nip = (nip, count)
+                if _ban_nip:
+                    _auto_ban(_ban_nip[0], f"auth_fail_{_ban_nip[1]}x")
         return Response(
             "Authentication required\n",
             401,

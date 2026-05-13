@@ -36,6 +36,10 @@ def api_ingest():
     """
     if config.INGEST_KEY:
         auth_header = request.headers.get("Authorization", "")
+        # Cap to exact expected length + small slack before compare_digest to
+        # prevent memory exhaustion from arbitrarily long Authorization headers.
+        _max_len = len("Bearer ") + len(config.INGEST_KEY) + 16
+        auth_header = auth_header[:_max_len]
         expected = f"Bearer {config.INGEST_KEY}"
         if not secrets.compare_digest(auth_header, expected):
             return jsonify({"ok": False, "error": "unauthorized"}), 401

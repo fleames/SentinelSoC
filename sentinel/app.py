@@ -91,6 +91,9 @@ def create_app():
         static_folder=_STATIC_DIR,
     )
 
+    # Limit ingest body size to 32 MB to prevent memory exhaustion via crafted POST bodies.
+    app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
+
     # ========================
     # AUTH GATE
     # ========================

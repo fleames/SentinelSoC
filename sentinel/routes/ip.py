@@ -25,13 +25,18 @@ def api_ip():
         if not isinstance(path_rows, _Counter):
             path_rows = _Counter(path_rows)
         path_rows_list = path_rows.most_common(50)
-        uas   = sorted(state.ip_to_uas.get(ip, set()))
-        hits  = int(state.ips[ip])
-        score = int(state.ip_scores[ip])
-        tags  = sorted(state.ip_tags.get(ip, ()))
-        note  = state.ip_notes.get(ip, "")
-        cat   = state.ip_categories.get(ip, "")
-        raw_geo = state.ip_geo.get(ip, {})
+        uas         = sorted(state.ip_to_uas.get(ip, set()))
+        hits        = int(state.ips[ip])
+        score       = int(state.ip_scores[ip])
+        tags        = sorted(state.ip_tags.get(ip, ()))
+        note        = state.ip_notes.get(ip, "")
+        cat         = state.ip_categories.get(ip, "")
+        raw_geo     = state.ip_geo.get(ip, {})
+        banned      = ip in state.banned_ips
+        ban_note    = state.ban_notes.get(ip, "")
+        muted_hits  = int(state.muted_hits.get(ip, 0))
+        expires_raw = state.ban_expires_at.get(ip)
+        ban_expires_at = float(expires_raw) if expires_raw is not None else None
 
     geo = {
         "country": raw_geo.get("country", "") if raw_geo.get("country") not in ("", config.PLACEHOLDER_CC)  else "",
@@ -42,7 +47,72 @@ def api_ip():
         "ip": ip, "hits": hits, "score": score, "geo": geo,
         "paths": [[p, int(c)] for p, c in path_rows_list],
         "tags": tags, "note": note, "category": cat, "uas": uas,
+        "banned": banned, "ban_note": ban_note,
+        "muted_hits": muted_hits, "ban_expires_at": ban_expires_at,
     })
+
+
+@bp.route("/api/ip/purge", methods=["POST"])
+def api_ip_purge():
+    """Remove all tracking records for an IP from live state.
+    The IP stays in the ban list if it was banned — only observation data is erased.
+    """
+    from sentinel.auth import _audit_actor, _audit_write
+    from sentinel.persistence import _save_bans
+    data = request.get_json(silent=True) or {}
+    ip = str(data.get("ip") or request.args.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+
+    with state.lock:
+        state.ips.pop(ip, None)
+        state.ip_scores.pop(ip, None)
+        state.ip_geo.pop(ip, None)
+        state.ip_paths.pop(ip, None)
+        state.ip_tags.pop(ip, None)
+        state.ip_hosts.pop(ip, None)
+        state.ip_behavior.pop(ip, None)
+        state.ip_recent_paths.pop(ip, None)
+        state.ip_days_seen.pop(ip, None)
+        state.pending_geo_hits.pop(ip, None)
+        state.muted_hits.pop(ip, None)
+        # Remove from UA indexes
+        for ua in list(state.ip_to_uas.get(ip, set())):
+            state.ua_to_ips[ua].discard(ip)
+            if not state.ua_to_ips[ua]:
+                state.ua_to_ips.pop(ua, None)
+        state.ip_to_uas.pop(ip, None)
+        # Remove from ASN index
+        asn = (state.ip_geo.get(ip) or {}).get("asn", "")
+        if asn:
+            state.asn_ips[asn].discard(ip)
+        # SSH records
+        state.ssh_ips.pop(ip, None)
+        state.ssh_ip_users.pop(ip, None)
+        state.ssh_ip_auth_methods.pop(ip, None)
+        state.ssh_ip_wordlist_fp.pop(ip, None)
+        state.ssh_ip_key_fps.pop(ip, None)
+        state.ssh_ip_kex_fp.pop(ip, None)
+        state.ssh_ip_src_ports.pop(ip, None)
+        state.ssh_ip_port_entropy.pop(ip, None)
+        state.ssh_ip_combos.pop(ip, None)
+        # TLS fingerprint
+        fp_val = state.ip_tls_fp.pop(ip, None)
+        if fp_val:
+            state.tls_fp_to_ips[fp_val].discard(ip)
+            if not state.tls_fp_to_ips[fp_val]:
+                state.tls_fp_to_ips.pop(fp_val, None)
+        # Reputation caches
+        state.ipenrich_cache.pop(ip, None)
+        state.ipinfo_cache.pop(ip, None)
+        state.abuseipdb_cache.pop(ip, None)
+        state.greynoise_cache.pop(ip, None)
+        state.geo_cache.pop(ip, None)
+        state.auth_fail_counts.pop(ip, None)
+        still_banned = ip in state.banned_ips
+
+    _audit_write("ip_purge", _audit_actor(), {"ip": ip})
+    return jsonify({"ok": True, "ip": ip, "still_banned": still_banned})
 
 
 @bp.route("/api/ip/note", methods=["POST"])

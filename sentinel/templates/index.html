@@ -271,6 +271,7 @@
           <span class="modal-flag" id="modalFlag"></span>
           <span class="modal-ip" id="modalIpText">&mdash;</span>
           <span class="modal-cc-pill" id="modalCcPill" style="display:none"></span>
+          <span id="modalBlockedBadge" style="display:none;margin-left:8px;font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:3px;background:#dc2626;color:#fff;vertical-align:middle"></span>
         </div>
         <div class="modal-actions">
           <button type="button" class="toolbtn" id="modalCopy">Copy IP</button>
@@ -285,6 +286,7 @@
             <option value="bad_asn">Bad ASN</option>
           </select>
           <button type="button" class="toolbtn danger" id="modalBan">Mute</button>
+          <button type="button" class="toolbtn danger" id="modalPurge" style="display:none" title="Erase all tracking records for this IP (ban stays active)">Purge records</button>
           <button type="button" class="toolbtn" id="modalIpWhitelist" title="Whitelist IP — completely ignore all traffic from this address">Whitelist</button>
           <button type="button" class="toolbtn" id="modalClose">&#10005;</button>
         </div>

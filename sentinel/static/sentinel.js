@@ -895,6 +895,9 @@ async function openIpModal(ip){
   document.getElementById('mStatGn').innerText='\u2014';
   document.getElementById('modalPaths').innerHTML='<div style="padding:28px 12px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center">Loading\u2026</div>';
   var _uaW=document.getElementById('modalUaWrap'); if(_uaW) _uaW.style.display='none';
+  var _badge=document.getElementById('modalBlockedBadge'); if(_badge){_badge.style.display='none';_badge.innerText='';}
+  var _purgeBtn=document.getElementById('modalPurge'); if(_purgeBtn) _purgeBtn.style.display='none';
+  var _banBtn=document.getElementById('modalBan'); if(_banBtn){_banBtn.innerText='Mute';_banBtn.dataset.mode='ban';}
   document.getElementById('modalBg').classList.add('open');
   try{
     var res=await fetch('/api/ip?ip='+encodeURIComponent(ip),{credentials:'same-origin'});
@@ -925,6 +928,29 @@ async function openIpModal(ip){
       classEl.className='modal-stat-val';
     } else {
       classEl.innerText='clean'; classEl.className='modal-stat-val ok';
+    }
+
+    // Blocked badge + button state
+    var badge=document.getElementById('modalBlockedBadge');
+    var banBtn=document.getElementById('modalBan');
+    var purgeBtn=document.getElementById('modalPurge');
+    if(j.banned){
+      if(badge){
+        var badgeTxt='BLOCKED';
+        if(j.ban_expires_at){
+          var secsLeft=Math.max(0,Math.round(j.ban_expires_at-Date.now()/1000));
+          var hLeft=Math.floor(secsLeft/3600), mLeft=Math.floor((secsLeft%3600)/60);
+          badgeTxt+=' ('+hLeft+'h '+mLeft+'m left)';
+        } else if(j.ban_note){
+          badgeTxt+=' — '+j.ban_note;
+        }
+        badge.innerText=badgeTxt;
+        badge.style.display='inline-block';
+      }
+      if(banBtn){banBtn.innerText='Unban';banBtn.dataset.mode='unban';}
+      if(purgeBtn) purgeBtn.style.display='';
+    } else if(j.muted_hits>0){
+      if(purgeBtn) purgeBtn.style.display='';
     }
 
     // Geo strip
@@ -1544,6 +1570,19 @@ document.getElementById('modalExtLink').addEventListener('click',function(e){
 });
 document.getElementById('modalBan').addEventListener('click',async function(){
   if(!modalIp) return;
+  var mode=this.dataset.mode||'ban';
+  if(mode==='unban'){
+    if(!confirm('Unban '+modalIp+'?')) return;
+    try{
+      var r=await fetch('/api/unban',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
+      var j=await r.json().catch(function(){ return {}; });
+      if(!r.ok){ alert(j.error||'Unban failed'); return; }
+      warnIptables(j);
+      closeModal();
+      await load(true);
+    }catch(e){ alert('Unban failed'); }
+    return;
+  }
   var noteEl=document.getElementById('modalBanNote');
   var note=noteEl?noteEl.value.trim():'';
   try{
@@ -1569,6 +1608,18 @@ document.getElementById('modalIpWhitelist').addEventListener('click',async funct
     closeModal();
     await load(true);
   }catch(e){ alert('Whitelist failed'); }
+});
+
+document.getElementById('modalPurge').addEventListener('click',async function(){
+  if(!modalIp) return;
+  if(!confirm('Purge all records for '+modalIp+'?\nTracking data (hits, score, paths, geo, behaviour) will be erased.\nIf the IP is banned it will remain blocked.')) return;
+  try{
+    var r=await fetch('/api/ip/purge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:modalIp})});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok){ alert(j.error||'Purge failed'); return; }
+    closeModal();
+    await load(true);
+  }catch(e){ alert('Purge failed'); }
 });
 
 document.body.addEventListener('click',function(e){

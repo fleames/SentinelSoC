@@ -386,10 +386,11 @@
 
     <!-- Credential combos (PAM capture) -->
     <div class="card" id="pwCard">
-      <h2>Credential combos tried <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span>
-        <span id="pwExportBtns" style="display:none;float:right;gap:6px;display:none">
-          <a id="pwExportCsv" href="/api/ssh/combos/export?fmt=csv" download class="export-btn">CSV</a>
-          <a id="pwExportJson" href="/api/ssh/combos/export?fmt=json" download class="export-btn">JSON</a>
+      <h2 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <span>Credential combos tried <span class="hint" id="pwHint">requires PAM setup &mdash; see scripts/sentinel-ssh-pw-log.sh</span></span>
+        <span id="pwExportBtns" style="display:none;gap:6px">
+          <a href="/api/ssh/combos/export" download class="export-btn">TXT</a>
+          <a href="/api/ssh/combos/export?fmt=json" download class="export-btn">JSON</a>
         </span>
       </h2>
       <div style="max-height:340px;overflow-y:auto" id="pwList"></div>
@@ -1016,7 +1017,7 @@ function renderPasswordList(combos, active){
   var total=combos.reduce(function(a,c){return a+c.attempts;},0);
   if(hint) hint.textContent='live PAM capture \u2014 '+fmt(total)+' attempts, '+fmt(combos.length)+' unique combos';
   var eb=document.getElementById('pwExportBtns');
-  if(eb) eb.style.display=combos.length?'inline-flex':'none';
+  if(eb) eb.style.display=combos.length?'flex':'none';
   if(!combos||!combos.length){
     el.innerHTML='<div class="ssh-empty">No credential data yet</div>';
     return;

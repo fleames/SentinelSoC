@@ -540,6 +540,7 @@ def _save_parsed_state():
             "ssh_actor_labels": dict(state.ssh_actor_labels),
             "ip_notes": dict(state.ip_notes),
             "ip_categories": dict(state.ip_categories),
+            "purged_ips": sorted(state.purged_ips),
             "ssh_kex_fps": list(state.ssh_kex_fps.most_common(2000)),
             "ssh_ip_kex_fp": dict(state.ssh_ip_kex_fp),
             "ssh_kex_fp_ips": {
@@ -752,6 +753,8 @@ def _load_parsed_state():
         state.ip_categories.update(
             {str(k): str(v) for k, v in dict(data.get("ip_categories", {})).items()}
         )
+        state.purged_ips.clear()
+        state.purged_ips.update(str(ip) for ip in list(data.get("purged_ips", [])))
 
         state.ssh_kex_fps.clear()
         state.ssh_kex_fps.update(

@@ -83,6 +83,9 @@ whitelisted_paths = set()   # set of path prefix strings e.g. "/locales/", "/api
 # IP whitelist: completely ignored — events never reach state updates.
 whitelisted_ips = set()
 
+# Purged IPs: removed from live state; filtered out of history event queries.
+purged_ips = set()
+
 # Botnet campaign tracking
 suspicious_hit_buffer = deque(maxlen=10000)
 botnet_campaigns = {}   # trigger_uri -> campaign dict

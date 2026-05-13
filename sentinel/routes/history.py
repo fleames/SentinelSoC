@@ -207,7 +207,10 @@ def api_history_events():
                 ts = float(row.get("ts_epoch", 0) or 0)
                 if ts < from_ts or ts > to_ts:
                     continue
-                if ip_f and str(row.get("ip", "")) != ip_f:
+                row_ip = str(row.get("ip", ""))
+                if ip_f and row_ip != ip_f:
+                    continue
+                if row_ip in state.purged_ips:
                     continue
                 if host_f and host_f not in str(row.get("host", "")).lower():
                     continue

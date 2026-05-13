@@ -109,8 +109,11 @@ def api_ip_purge():
         state.greynoise_cache.pop(ip, None)
         state.geo_cache.pop(ip, None)
         state.auth_fail_counts.pop(ip, None)
+        state.purged_ips.add(ip)
         still_banned = ip in state.banned_ips
 
+    from sentinel.persistence import _save_parsed_state
+    _save_parsed_state()
     _audit_write("ip_purge", _audit_actor(), {"ip": ip})
     return jsonify({"ok": True, "ip": ip, "still_banned": still_banned})
 
